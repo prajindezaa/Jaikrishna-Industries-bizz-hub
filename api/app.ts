@@ -3,7 +3,7 @@
  * Express Application serving both local dev server and Vercel Serverless Functions.
  */
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import {
