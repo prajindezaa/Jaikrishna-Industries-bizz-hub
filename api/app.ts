@@ -13,15 +13,9 @@ import {
   AuthenticatedRequest,
 } from './middleware';
 
-// Load dotenv only during local dev (Vercel injects env vars natively)
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dotenv = require('dotenv');
-  dotenv.config();
-  dotenv.config({ path: '.env.local' });
-} catch (_) {
-  // dotenv not available in Vercel production — this is expected
-}
+// NOTE: dotenv is NOT loaded here.
+// - Local dev: server.ts loads dotenv BEFORE importing this module.
+// - Vercel production: Environment variables are injected natively by Vercel.
 
 // Helper: get FieldValue from the initialized firebase-admin instance
 function getFieldValue() {
