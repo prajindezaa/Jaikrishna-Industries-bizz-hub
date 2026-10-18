@@ -22,7 +22,7 @@ Modern Business Management PWA for pooja products manufacturing (Pure Bhimseni C
 
 ### 2. Clone and Install
 ```bash
-git clone <your-private-repo-url>
+git clone https://github.com/prajindezaa/Jaikrishna-Industries-bizz-hub.git
 cd jaikrishna-industries
 npm install
 npm --prefix functions install
@@ -57,6 +57,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## Deployment
 
 * **Frontend & Serverless API**: Connect GitHub repository directly to **Vercel** with the Vite preset.
+  * **Live URL**: [https://jaikrishna-industries-bizz-hub.vercel.app](https://jaikrishna-industries-bizz-hub.vercel.app)
 * **Firestore Rules & Cloud Functions**: Deploy via Firebase CLI:
   ```bash
   firebase deploy --only firestore:rules,firestore:indexes,functions

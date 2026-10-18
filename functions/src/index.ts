@@ -198,7 +198,7 @@ async function sendMemberDigestEmail(email: string, tasks: admin.firestore.Docum
         ${taskListHtml}
       </ul>
       <p style="margin-top: 20px;">
-        <a href="https://jaikrishnaindustries.com/tasks" style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 12px;">Open Tasks in Hub</a>
+        <a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks" style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 12px;">Open Tasks in Hub</a>
       </p>
     </div>
   `;
