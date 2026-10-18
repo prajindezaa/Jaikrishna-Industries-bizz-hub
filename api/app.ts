@@ -11,7 +11,7 @@ import {
   getFirebaseAdmin,
   INITIAL_ADMIN_EMAIL,
   AuthenticatedRequest,
-} from './middleware';
+} from './middleware.js';
 
 // NOTE: dotenv is NOT loaded here.
 // - Local dev: server.ts loads dotenv BEFORE importing this module.
