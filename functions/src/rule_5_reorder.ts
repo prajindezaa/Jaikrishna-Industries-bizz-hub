@@ -168,27 +168,25 @@ export async function executeRule5ReorderReminders(
     const customerId = custDoc.id;
     const customerName = cust.companyName || cust.contactPerson || 'Customer';
 
-    // Must have at least 2 completed orders in the database
+    // Fetch customer orders without requiring a composite index on (customerId, isDeleted, orderDate)
     const ordersSnap = await db
       .collection('orders')
       .where('customerId', '==', customerId)
-      .where('isDeleted', '==', false)
-      .orderBy('orderDate', 'asc')
       .get();
-
-    if (ordersSnap.size < 2) {
-      stats.skippedFewerThanTwoOrders++;
-      stats.skipped++;
-      continue;
-    }
 
     const orderDates: Date[] = [];
     ordersSnap.forEach((d) => {
-      const oDate = parseDate(d.data().orderDate);
-      if (oDate) {
-        orderDates.push(oDate);
+      const dData = d.data();
+      if (!dData.isDeleted) {
+        const oDate = parseDate(dData.orderDate);
+        if (oDate) {
+          orderDates.push(oDate);
+        }
       }
     });
+
+    // Sort order dates chronologically in-memory
+    orderDates.sort((a, b) => a.getTime() - b.getTime());
 
     if (orderDates.length < 2) {
       stats.skippedFewerThanTwoOrders++;
