@@ -1107,7 +1107,7 @@ app.get('/api/cron/daily-automations', async (req: Request, res: Response) => {
         console.error('[Vercel Cron] Resend email send failed:', e);
       }
     };
-    const stats = await executeRule7MorningPlan(db, sendResendEmail);
+    const stats = await executeRule7MorningPlan(db, sendResendEmail, { forceRunNow: true });
     results.rule_7 = { status: 'success', ...stats };
     console.log('[Vercel Cron] Rule 7 completed:', stats);
   } catch (err) {

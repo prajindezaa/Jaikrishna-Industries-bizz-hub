@@ -94,9 +94,18 @@ export async function executeRule7MorningPlan(
   const memberConfigs = params.memberSettings || {};
   const maxLatenessMinutes = params.maxLatenessMinutes ?? 120; // 2 hours default
 
-  // 2. Fetch allowlisted team members
-  const allowedSnap = await db.collection('allowed_emails').get();
-  const members = allowedSnap.docs.map((d) => d.id);
+  // 2. Fetch team members: check team_members first, then allowed_emails, then fallback
+  const teamSnap = await db.collection('team_members').get();
+  let members = teamSnap.docs.map((d) => d.data().email || d.id).filter(Boolean);
+
+  if (members.length === 0) {
+    const allowedSnap = await db.collection('allowed_emails').get();
+    members = allowedSnap.docs.map((d) => d.id).filter(Boolean);
+  }
+
+  if (members.length === 0) {
+    members = ['prajindezaa142@gmail.com'];
+  }
   result.evaluated = members.length;
 
   for (const email of members) {
@@ -104,7 +113,7 @@ export async function executeRule7MorningPlan(
       enabled: true,
       deliveryTime: '08:00',
       channels: { push: true, inApp: true, email: true },
-      sendIfEmpty: false,
+      sendIfEmpty: true,
     };
 
     if (!memberCfg.enabled) {
@@ -178,14 +187,19 @@ export async function executeRule7MorningPlan(
       return isOpen && data.date && data.date < todayStr;
     });
 
-    // 3. New leads created since yesterday
+    // 3. New leads created since yesterday (in-memory filter to avoid composite index)
     const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const newLeadsSnap = await db
+    const recentCustomersSnap = await db
       .collection('customers')
-      .where('createdAt', '>=', yesterdayDate.toISOString())
-      .where('isDeleted', '==', false)
-      .limit(5)
+      .limit(50)
       .get();
+
+    const newLeads = recentCustomersSnap.docs.filter((d) => {
+      const data = d.data();
+      if (data.isDeleted) return false;
+      const cDate = data.createdAt ? new Date(data.createdAt) : null;
+      return cDate && cDate.getTime() >= yesterdayDate.getTime();
+    }).slice(0, 5);
 
     // 4. Pending automation tasks across system
     const pendingAutoTasks = allMemberTasksSnap.docs.filter((d) => {
@@ -193,20 +207,23 @@ export async function executeRule7MorningPlan(
       return data.isAutomation === true && data.status === 'Pending';
     });
 
-    // 5. Meta ads waiting for result
-    const adsWaitingSnap = await db
+    // 5. Meta ads waiting for result (in-memory filter to avoid composite index)
+    const allAdsSnap = await db
       .collection('meta_ads')
-      .where('stage', '==', 'Waiting for result')
-      .where('isDeleted', '==', false)
-      .limit(5)
+      .limit(20)
       .get();
+
+    const adsWaiting = allAdsSnap.docs.filter((d) => {
+      const data = d.data();
+      return !data.isDeleted && data.stage === 'Waiting for result';
+    });
 
     const totalCount =
       tasksTodaySnap.size +
       overdueTasks.length +
-      newLeadsSnap.size +
+      newLeads.length +
       pendingAutoTasks.length +
-      adsWaitingSnap.size;
+      adsWaiting.length;
 
     // Empty day handling: skip if empty and sendIfEmpty is false
     if (totalCount === 0 && !memberCfg.sendIfEmpty && !options?.forceRunNow) {
@@ -216,7 +233,7 @@ export async function executeRule7MorningPlan(
 
     // Record deduplication receipt first
     await dedupeRef.set({
-      deliveredAt: FieldValue.serverTimestamp(),
+      deliveredAt: new Date().toISOString(),
       memberEmail: email,
       date: todayStr,
       scheduledTime: chosenTime,
@@ -228,7 +245,7 @@ export async function executeRule7MorningPlan(
       recipientEmail: email,
       title: `Good Morning! Daily Plan — ${todayStr}`,
       body: totalCount > 0 
-        ? `${tasksTodaySnap.size} task(s) today, ${overdueTasks.length} overdue, ${newLeadsSnap.size} new lead(s).` 
+        ? `${tasksTodaySnap.size} task(s) today, ${overdueTasks.length} overdue, ${newLeads.length} new lead(s).` 
         : 'Your schedule is clear for today.',
       type: 'morning_plan',
       priority: 'normal',
@@ -269,7 +286,7 @@ export async function executeRule7MorningPlan(
           link: `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`,
         }));
 
-        const newLeadItems = newLeadsSnap.docs.map((d) => ({
+        const newLeadItems = newLeads.map((d) => ({
           id: d.id,
           title: d.data().companyName || d.data().contactPerson || d.id,
           link: `https://jaikrishna-industries-bizz-hub.vercel.app/customers?id=${d.id}`,
@@ -291,7 +308,7 @@ export async function executeRule7MorningPlan(
         await sendResendEmailFn(email, `Daily Morning Plan — ${todayStr}`, emailHtml);
 
         await counterRef.set(
-          { count: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() },
+          { count: (counterDoc.data()?.count || 0) + 1, updatedAt: new Date().toISOString() },
           { merge: true }
         );
       }

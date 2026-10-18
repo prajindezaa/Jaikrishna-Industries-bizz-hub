@@ -150,7 +150,7 @@ export async function routeNotificationIntent(
         deepLink: intent.deepLink || '/',
         dedupeKey: intent.dedupeKey,
         isRead: false,
-        createdAt: FieldValue.serverTimestamp(),
+        createdAt: new Date().toISOString(),
       });
       channelsDelivered.push('in_app');
     } catch (inAppErr) {
@@ -243,7 +243,7 @@ async function logNotificationOutcome(
       channelsDelivered,
       status,
       suppressionReason: suppressionReason || null,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: new Date().toISOString(),
     });
   } catch (err) {
     console.warn('[Router] Failed to write notification_log audit:', err);
