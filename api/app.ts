@@ -564,29 +564,29 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
     const adminSdk = getFirebaseAdmin();
     const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
-    // Pull tasks and stats
-    const tasksSnap = await adminSdk.firestore()
+    // Pull member's tasks safely without requiring a composite index
+    const allMemberTasksSnap = await adminSdk.firestore()
       .collection('tasks')
       .where('assignedTo', '==', targetEmail)
-      .where('date', '==', todayStr)
-      .where('isDeleted', '==', false)
-      .limit(10)
+      .limit(60)
       .get();
 
-    const overdueSnap = await adminSdk.firestore()
-      .collection('tasks')
-      .where('assignedTo', '==', targetEmail)
-      .where('date', '<', todayStr)
-      .where('status', 'in', ['Pending', 'In progress'])
-      .where('isDeleted', '==', false)
-      .limit(10)
-      .get();
+    const tasksToday = allMemberTasksSnap.docs.filter((d) => {
+      const data = d.data();
+      return !data.isDeleted && data.date === todayStr;
+    });
+
+    const overdueTasks = allMemberTasksSnap.docs.filter((d) => {
+      const data = d.data();
+      const isOpen = data.status === 'Pending' || data.status === 'In progress';
+      return !data.isDeleted && isOpen && data.date && data.date < todayStr;
+    });
 
     // Create an in-app notification
     await adminSdk.firestore().collection('notifications').add({
       recipientEmail: targetEmail,
       title: `[Sample] Daily Operations Plan — ${todayStr}`,
-      body: `You have ${tasksSnap.size} task(s) today and ${overdueSnap.size} overdue tasks in your queue.`,
+      body: `You have ${tasksToday.length} task(s) today and ${overdueTasks.length} overdue tasks in your queue.`,
       type: 'morning_plan',
       deepLink: '/tasks',
       isRead: false,
@@ -612,7 +612,7 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
               token: dev.token,
               notification: {
                 title: `🌅 Morning Plan — ${todayStr}`,
-                body: `You have ${tasksSnap.size} task(s) today and ${overdueSnap.size} overdue follow-up(s).`,
+                body: `You have ${tasksToday.length} task(s) today and ${overdueTasks.length} overdue follow-up(s).`,
               },
               data: {
                 deepLink: '/tasks',
@@ -632,8 +632,8 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
     res.json({
       success: true,
       message: `Sample morning plan generated and delivered as in-app notification${pushDeliveredCount > 0 ? ` and sent to ${pushDeliveredCount} device(s)` : ''}.`,
-      tasksTodayCount: tasksSnap.size,
-      overdueTasksCount: overdueSnap.size,
+      tasksTodayCount: tasksToday.length,
+      overdueTasksCount: overdueTasks.length,
       pushDeliveredCount,
     });
   } catch (err: unknown) {
