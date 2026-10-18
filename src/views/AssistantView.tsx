@@ -209,20 +209,21 @@ export const AssistantView: React.FC = () => {
         }),
       });
 
-      if (!response.ok) {
-        let errorDetails = '';
-        try {
-          const errJson = await response.json();
-          errorDetails = errJson.message || errJson.error || JSON.stringify(errJson);
-        } catch {
-          errorDetails = await response.text();
-        }
-        throw new Error(errorDetails || `HTTP ${response.status} ${response.statusText}`);
+      const rawText = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        // Not JSON
       }
 
-      const data = await response.json();
+      if (!response.ok) {
+        const errorDetails = data?.message || data?.error || rawText || `HTTP ${response.status} ${response.statusText}`;
+        throw new Error(errorDetails);
+      }
+
       const replyText =
-        data.reply ||
+        data?.reply ||
         'I received your inquiry. However, I could not generate an answer at this time.';
 
       const botMsg: Message = {
