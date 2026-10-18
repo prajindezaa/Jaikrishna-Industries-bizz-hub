@@ -86,6 +86,38 @@ export const PushOnboarding: React.FC = () => {
     }
   };
 
+  const [hasToken, setHasToken] = useState<boolean>(() => {
+    return typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('jaikrishna_last_fcm_token'));
+  });
+
+  const handleSyncToken = async () => {
+    if (!auth?.currentUser) {
+      alert('Please log in first to register device.');
+      return;
+    }
+    setLoading(true);
+    setTestStatus('Generating FCM token and registering device with server...');
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const token = await getFcmToken();
+      if (!token) {
+        setTestStatus('Could not generate FCM push token. Please check browser service worker / notification permissions.');
+        return;
+      }
+      const ok = await syncDeviceWithServer(idToken, token);
+      if (ok) {
+        setHasToken(true);
+        setTestStatus('Device & FCM push token registered successfully with server!');
+      } else {
+        setTestStatus('Failed to sync device with backend server.');
+      }
+    } catch (err: any) {
+      setTestStatus(`Registration error: ${err?.message || String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSendTestPush = async (targetAll: boolean = false) => {
     if (!auth?.currentUser) {
       alert('Please log in first to send test push.');
@@ -93,9 +125,27 @@ export const PushOnboarding: React.FC = () => {
     }
 
     setLoading(true);
-    setTestStatus('Sending test notification...');
+    setTestStatus('Preparing test push (verifying device token)...');
     try {
       const idToken = await auth.currentUser.getIdToken();
+
+      // Ensure device and FCM token are synced with server
+      let token = typeof localStorage !== 'undefined' ? localStorage.getItem('jaikrishna_last_fcm_token') : null;
+      if (!token) {
+        setTestStatus('Obtaining fresh FCM push token from Firebase...');
+        token = await getFcmToken();
+      }
+
+      if (token) {
+        setHasToken(true);
+        await syncDeviceWithServer(idToken, token);
+      } else {
+        setTestStatus('Push delivery notice: Could not obtain FCM token. Ensure Notifications are allowed and Service Worker is active.');
+        setLoading(false);
+        return;
+      }
+
+      setTestStatus('Sending test notification to registered device(s)...');
       const response = await fetch('/api/devices/test-push', {
         method: 'POST',
         headers: {
@@ -122,7 +172,7 @@ export const PushOnboarding: React.FC = () => {
       }
 
       if (data?.success) {
-        setTestStatus(`Push delivered successfully! (${data.successfulCount}/${data.total} devices confirmed)`);
+        setTestStatus(`🎉 Push delivered successfully! (${data.successfulCount}/${data.total} devices confirmed)`);
       } else {
         setTestStatus(`Push delivery failed: ${data?.message || data?.error || 'No active device tokens found.'}`);
       }
@@ -243,13 +293,31 @@ export const PushOnboarding: React.FC = () => {
 
           {permission === 'granted' && (
             <div className="space-y-4">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${
+                  hasToken ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${hasToken ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  {hasToken ? 'Push Token Active & Synced' : 'Device Registered (Token Sync Needed)'}
+                </span>
+                <button
+                  onClick={handleSyncToken}
+                  disabled={loading}
+                  className="px-2.5 py-1 text-slate-400 hover:text-white transition flex items-center gap-1 underline underline-offset-2"
+                  title="Force re-sync token with server"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh Token
+                </button>
+              </div>
+
               <div className="flex flex-wrap gap-3">
                 <button
                   onClick={() => handleSendTestPush(false)}
                   disabled={loading}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-xl text-sm font-medium transition flex items-center gap-2"
+                  className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white rounded-xl text-sm font-medium shadow-md shadow-orange-500/10 transition flex items-center gap-2"
                 >
-                  <Send className="w-4 h-4 text-orange-400" />
+                  <Send className="w-4 h-4" />
                   Send Test to This Device
                 </button>
 
