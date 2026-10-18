@@ -10,6 +10,7 @@
 
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { routeNotificationIntent } from './notification_router';
 
 export interface Rule7CheckOptions {
   simulatedTime?: Date; // Used for automated testing and simulation
@@ -190,17 +191,18 @@ export async function executeRule7MorningPlan(
       totalCount,
     });
 
-    // In-App Notification (Always delivered)
-    await db.collection('notifications').add({
+    // Dispatch via centralized Notification Router (handles In-App, FCM Push, quiet hours, snooze)
+    await routeNotificationIntent(db, {
       recipientEmail: email,
       title: `Good Morning! Daily Plan — ${todayStr}`,
       body: totalCount > 0 
         ? `${tasksTodaySnap.size} task(s) today, ${overdueTasksSnap.size} overdue, ${newLeadsSnap.size} new lead(s).` 
         : 'Your schedule is clear for today.',
       type: 'morning_plan',
+      priority: 'normal',
       deepLink: '/tasks',
-      isRead: false,
-      createdAt: FieldValue.serverTimestamp(),
+      dedupeKey: `morning_plan_${email}_${todayStr}`,
+      bypassQuietHours: false,
     });
 
     // Email delivery (Respects global daily cap, falls back to Push & In-App on cap hit)
@@ -251,6 +253,22 @@ export async function executeRule7MorningPlan(
 
     result.sent.push(email);
   }
+
+  // Update rule document lastResult for Health Panel visibility
+  await ruleRef.update({
+    lastRunAt: new Date().toISOString(),
+    lastResult: {
+      status: 'success',
+      createdCount: result.sent.length,
+      skippedCount: result.skipped.length,
+      skipReasons: result.skipped.reduce((acc, s) => {
+        acc[s.reason] = (acc[s.reason] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+      error: null,
+      timestamp: new Date().toISOString(),
+    },
+  });
 
   return result;
 }

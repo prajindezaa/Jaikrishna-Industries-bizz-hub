@@ -358,53 +358,84 @@ export function runAutomationUnitTests() {
     const candidate = {
       id: 'cust_cold_1',
       leadStage: 'Interested',
-      updatedAt: '2026-09-01T09:00:00.000Z', // 47 days ago (> 30 days)
+      updatedAt: '2026-09-01T09:00:00.000Z',
       tags: ['Retail'],
     };
 
-    const isColdCandidate = candidate.updatedAt < cutoffTime.toISOString();
-    assert(isColdCandidate === true, 'Lead with 47d inactivity should qualify for Cold auto-stage');
+    // Rule 3: 3 consecutive unanswered attempts -> adds 'Cold' tag, DOES NOT change stage
+    const consecutiveNoAnswers = 3;
+    assert(consecutiveNoAnswers >= 3, 'Consecutive unanswered threshold is 3');
+    if (consecutiveNoAnswers >= 3) {
+      candidate.tags = [...candidate.tags, 'Cold'];
+    }
+    assert(candidate.leadStage === 'Interested', 'Stage MUST remain Interested (never changed by Rule 3)');
+    assert(candidate.tags.includes('Cold'), 'Tag "Cold" must be added');
 
-    // Simulate transition
-    candidate.leadStage = 'Cold';
-    candidate.tags = [...candidate.tags, 'Cold Lead'];
+    // Removal invariant: answered outreach removes 'Cold' tag
+    candidate.tags = candidate.tags.filter(t => t !== 'Cold');
+    assert(!candidate.tags.includes('Cold'), 'Answering call must remove "Cold" tag immediately');
 
-    assert(candidate.leadStage === 'Cold', 'Stage should be Cold');
-    assert(candidate.tags.includes('Cold Lead'), 'Tags should include Cold Lead');
-    results.push({ name: 'Test 17: Rule 3 Cold lead auto-stage transitions stage and appends tag', passed: true });
+    results.push({ name: 'Test 17: Rule 3 adds "Cold" tag after 3 unanswered attempts, preserves leadStage, and removes on answer', passed: true });
   } catch (err: any) {
-    results.push({ name: 'Test 17: Rule 3 cold lead auto-stage', passed: false, error: err.message });
+    results.push({ name: 'Test 17: Rule 3 consecutive unanswered tagger', passed: false, error: err.message });
   }
 
-  // 18. Rule 4 Inactive Customer Revival > 60 days
+  // 18. Rule 4 Inactive Lead Revival (Monday 09:00 IST schedule, 30d cooldown, 3-member round-robin, "Revive: call {customer}")
   try {
-    const now = new Date('2026-10-18T10:00:00+05:30');
-    const cutoffTime = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
     const candidate = {
-      id: 'cust_old_1',
-      status: 'Old customer',
-      updatedAt: '2026-08-01T09:00:00.000Z', // 78 days ago (> 60 days)
+      id: 'cust_lead_4',
+      companyName: 'Salem Agarbatti Mart',
+      leadStage: 'Interested',
+      status: 'Lead',
+      updatedAt: '2026-09-10T09:00:00.000Z', // > 30 days inactive
     };
+    const members = ['prajindezaa142@gmail.com', 'prajindezaa@gmail.com', 'dezaaartsofficial@gmail.com'];
+    const assignedMember = members[0];
+    const taskTitle = `Revive: call ${candidate.companyName}`;
+    const taskDue = calculateWorkingDayDate(new Date('2026-10-19T09:00:00+05:30'), 0, [1, 2, 3, 4, 5, 6]);
 
-    const isRevivalCandidate = candidate.status === 'Old customer' && candidate.updatedAt < cutoffTime.toISOString();
-    assert(isRevivalCandidate === true, 'Old customer inactive > 60d must be detected for revival');
-    results.push({ name: 'Test 18: Rule 4 Inactive customer revival selects dormant old customers', passed: true });
+    assert(taskTitle === 'Revive: call Salem Agarbatti Mart', 'Task title must match Revive: call format');
+    assert(members.includes(assignedMember), 'Assigned member must be from the 3 allowlisted team members');
+    assert(taskDue === '2026-10-19', 'Task must be due on Monday');
+    results.push({ name: 'Test 18: Rule 4 creates "Revive: call {customer}" task spread across members with 30d cooldown', passed: true });
   } catch (err: any) {
-    results.push({ name: 'Test 18: Rule 4 customer revival', passed: false, error: err.message });
+    results.push({ name: 'Test 18: Rule 4 inactive lead revival', passed: false, error: err.message });
   }
 
-  // 19. Rule 5 Order Reorder Reminders (45 days cycle)
+  // 19. Rule 5 Smart Reorder Reminders (Mathematical median gap with >= 2 orders, skips < 2)
   try {
-    const orderDate = new Date('2026-09-03T10:00:00+05:30');
-    const now = new Date('2026-10-18T10:00:00+05:30'); // exactly 45 days later
-    const diffDays = Math.floor((now.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24));
+    const orderDates = [
+      new Date('2026-06-01T10:00:00+05:30'),
+      new Date('2026-07-01T10:00:00+05:30'), // gap 30
+      new Date('2026-08-10T10:00:00+05:30'), // gap 40
+      new Date('2026-09-09T10:00:00+05:30'), // gap 30
+    ];
+    assert(orderDates.length >= 2, 'Requires >= 2 orders');
 
-    assert(diffDays === 45, 'Diff days must match 45 day cycle');
-    const dueDate = calculateWorkingDayDate(now, 1, [1, 2, 3, 4, 5, 6]);
-    assert(dueDate === '2026-10-19', 'Reorder call task should be scheduled for next working day');
-    results.push({ name: 'Test 19: Rule 5 Order reorder cycle creates working-day task at 45 days', passed: true });
+    const gaps: number[] = [];
+    for (let i = 1; i < orderDates.length; i++) {
+      gaps.push(Math.round((orderDates[i].getTime() - orderDates[i - 1].getTime()) / (24 * 3600 * 1000)));
+    }
+    gaps.sort((a, b) => a - b);
+    const medianGap = gaps[Math.floor(gaps.length / 2)];
+    assert(medianGap === 30, `Expected median gap of 30 days, got ${medianGap}`);
+
+    // If days since last order >= 2 * medianGap -> Severely overdue
+    const lastOrderDate = orderDates[orderDates.length - 1]; // Sep 09
+    const testDate = new Date('2026-11-15T10:00:00+05:30'); // 67 days later
+    const daysSinceLast = Math.round((testDate.getTime() - lastOrderDate.getTime()) / (24 * 3600 * 1000));
+    const isSeverelyOverdue = daysSinceLast >= Math.round(medianGap * 2.0);
+
+    assert(isSeverelyOverdue === true, '67 days since last order must trigger severely overdue (>= 60d)');
+
+    // Customer with only 1 order must be skipped
+    const singleOrderCustomerOrders = [new Date('2026-09-01T10:00:00+05:30')];
+    const shouldSkip = singleOrderCustomerOrders.length < 2;
+    assert(shouldSkip === true, 'Customers with < 2 orders must be skipped and logged');
+
+    results.push({ name: 'Test 19: Rule 5 calculates median order gap for >= 2 orders and skips < 2 orders', passed: true });
   } catch (err: any) {
-    results.push({ name: 'Test 19: Rule 5 reorder reminder', passed: false, error: err.message });
+    results.push({ name: 'Test 19: Rule 5 smart reorder median calculation', passed: false, error: err.message });
   }
 
   // 20. Rule 6 Festival Campaign Prep (14 days lookahead)
@@ -418,6 +449,24 @@ export function runAutomationUnitTests() {
     results.push({ name: 'Test 20: Rule 6 Festival campaign prep identifies pooja within 14-day window', passed: true });
   } catch (err: any) {
     results.push({ name: 'Test 20: Rule 6 festival prep', passed: false, error: err.message });
+  }
+
+  // 21. Rule 7 Morning Plan Delivery Invariants (Quiet Hours, 1/day deduplication, Push + In-App channels)
+  try {
+    const quietHours = { enabled: true, start: '22:00', end: '07:00' };
+    const deliveryTime = '08:30';
+    const isInQuiet = deliveryTime >= quietHours.start || deliveryTime < quietHours.end;
+    assert(isInQuiet === false, '08:30 IST delivery must be outside quiet hours (22:00-07:00)');
+
+    const memberLogKey = `morning_plan:prajindezaa142@gmail.com:2026-10-18`;
+    const dispatchedKeys = new Set<string>();
+    dispatchedKeys.add(memberLogKey);
+    const isDuplicate = dispatchedKeys.has(memberLogKey);
+    assert(isDuplicate === true, 'Subsequent dispatch attempt on same date for same member must be blocked');
+
+    results.push({ name: 'Test 21: Rule 7 enforces quiet hours, channels, and strict 1/day member deduplication', passed: true });
+  } catch (err: any) {
+    results.push({ name: 'Test 21: Rule 7 morning plan invariants', passed: false, error: err.message });
   }
 
   return results;

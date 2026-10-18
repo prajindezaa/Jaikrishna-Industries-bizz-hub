@@ -2,11 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Jaikrishna Industries — Rule 3: Cold Lead Auto-Stage Engine
- * Evaluates leads in active stages (Interested, Contacted, Sample sent)
- * with no activity logs or customer updates for >= N days (default: 30 days).
- * Moves leadStage to 'Cold', applies tag 'Cold Lead', and records rolling run logs.
- * Evaluated daily strictly in Asia/Kolkata.
+ * Jaikrishna Industries — Rule 3: Consecutive Unanswered Cold Tagging Engine
+ * Evaluates active leads. When N consecutive outreach logs are 'No answer' (default 3),
+ * adds the tag "Cold". Never changes leadStage.
+ * Does NOT run for customers with status 'Old customer', or stages 'Ordered' or 'Not interested'.
+ * When an outreach log is 'Answered', 'Interested', or an order is placed, the "Cold" tag is removed.
+ * Evaluated strictly in Asia/Kolkata.
  */
 
 import { Firestore, FieldValue } from 'firebase-admin/firestore';
@@ -14,16 +15,20 @@ import * as crypto from 'crypto';
 
 export interface Rule3Options {
   simulatedTime?: Date;
+  dryRun?: boolean;
+  triggeredBy?: 'scheduled_cron' | 'manual_test';
 }
 
 export async function executeRule3AutoStageCold(
   db: Firestore,
   options?: Rule3Options
-): Promise<{ evaluated: number; updated: number; skipped: number; pendingQueued: number }> {
+): Promise<{ evaluated: number; updated: number; skipped: number; pendingQueued: number; dryRun?: boolean }> {
   const now = options?.simulatedTime || new Date();
+  const dryRun = Boolean(options?.dryRun);
+  const triggeredBy = options?.triggeredBy || 'scheduled_cron';
   const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
 
-  const stats = { evaluated: 0, updated: 0, skipped: 0, pendingQueued: 0 };
+  const stats = { evaluated: 0, updated: 0, skipped: 0, pendingQueued: 0, dryRun };
 
   // 1. Fetch Rule 3 settings
   const ruleRef = db.collection('automation_rules').doc('rule_3_auto_stage_cold');
@@ -34,14 +39,11 @@ export async function executeRule3AutoStageCold(
 
   const ruleData = ruleDoc.data()!;
   const params = ruleData.parameters || {};
-  const coldDaysThreshold = params.coldDaysThreshold || 30;
-  const targetStages: string[] = params.targetStages || ['Interested', 'Contacted', 'Sample sent'];
+  const consecutiveThreshold = params.consecutiveUnansweredThreshold || 3;
+  const targetStages: string[] = params.targetStages || ['Interested', 'Contacted', 'Sample sent', 'New', 'Negotiation'];
   const dailyCap = ruleData.dailyCap || 25;
 
-  const cutoffTime = new Date(now.getTime() - coldDaysThreshold * 24 * 60 * 60 * 1000);
-  const cutoffIso = cutoffTime.toISOString();
-
-  // 2. Query candidates: customers in active stages, not deleted
+  // 2. Query candidates: active leads, not deleted, not Old customer, not Ordered, not Not interested
   const customersSnap = await db
     .collection('customers')
     .where('isDeleted', '==', false)
@@ -59,8 +61,72 @@ export async function executeRule3AutoStageCold(
     const customerId = custDoc.id;
     const customerName = cust.companyName || cust.contactPerson || 'Customer';
 
-    const lastActivity = cust.updatedAt || cust.createdAt;
-    if (!lastActivity || lastActivity > cutoffIso) {
+    // Invariant: Never applies to Old customer, Ordered, or Not interested
+    if (cust.status === 'Old customer' || cust.leadStage === 'Ordered' || cust.leadStage === 'Not interested') {
+      stats.skipped++;
+      continue;
+    }
+
+    const currentTags: string[] = cust.tags || [];
+
+    // Query recent outreach logs for this customer
+    const logsSnap = await db
+      .collection('customers')
+      .doc(customerId)
+      .collection('outreach_logs')
+      .orderBy('loggedAt', 'desc')
+      .limit(consecutiveThreshold + 2)
+      .get();
+
+    if (logsSnap.empty) {
+      stats.skipped++;
+      continue;
+    }
+
+    const logs = logsSnap.docs.map((d) => d.data());
+
+    // Check recent attempts:
+    // If most recent is Answered, Interested -> ensure Cold tag is removed
+    const latest = logs[0];
+    if (latest.outcome === 'Answered' || latest.outcome === 'Interested') {
+      if (currentTags.includes('Cold') || currentTags.includes('Cold Lead')) {
+        const cleanedTags = currentTags.filter((t) => t !== 'Cold' && t !== 'Cold Lead');
+        await custDoc.ref.update({
+          tags: cleanedTags,
+          lastWriteSource: 'automation',
+          updatedBy: 'automation (rule_3_auto_stage_cold)',
+          updatedAt: new Date().toISOString(),
+        });
+        await db.collection('activity_logs').add({
+          action: 'customer_tag_remove',
+          byAutomation: true,
+          automationRuleId: 'rule_3_auto_stage_cold',
+          details: `Removed Cold tag from ${customerName} after outreach interaction (${latest.outcome}).`,
+          customerId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        stats.updated++;
+      }
+      continue;
+    }
+
+    // Check if last N consecutive attempts are 'No answer'
+    let consecutiveCount = 0;
+    for (const log of logs) {
+      if (log.outcome === 'No answer') {
+        consecutiveCount++;
+      } else {
+        break;
+      }
+    }
+
+    if (consecutiveCount < consecutiveThreshold) {
+      stats.skipped++;
+      continue;
+    }
+
+    // If already tagged 'Cold', nothing to do
+    if (currentTags.includes('Cold')) {
       stats.skipped++;
       continue;
     }
@@ -103,7 +169,7 @@ export async function executeRule3AutoStageCold(
         ruleId: 'rule_3_auto_stage_cold',
         customerId,
         customerName,
-        stage: 'Cold',
+        action: 'add_tag_cold',
         queuedAt: new Date().toISOString(),
         attemptedDate: todayStr,
         status: 'queued',
@@ -111,51 +177,61 @@ export async function executeRule3AutoStageCold(
       continue;
     }
 
-    // Update customer stage to 'Cold' and append 'Cold Lead' tag
-    await db.runTransaction(async (transaction) => {
-      const docSnap = await transaction.get(custDoc.ref);
-      if (!docSnap.exists) return;
-      const current = docSnap.data() || {};
+    if (!dryRun) {
+      // Apply tag 'Cold' strictly without changing leadStage
+      const newTags = [...currentTags, 'Cold'];
+      await db.runTransaction(async (transaction) => {
+        transaction.update(custDoc.ref, {
+          tags: newTags,
+          lastWriteSource: 'automation',
+          updatedBy: 'automation (rule_3_auto_stage_cold)',
+          updatedAt: new Date().toISOString(),
+        });
 
-      const currentTags: string[] = current.tags || [];
-      const updatedTags = currentTags.includes('Cold Lead') ? currentTags : [...currentTags, 'Cold Lead'];
-
-      transaction.update(custDoc.ref, {
-        leadStage: 'Cold',
-        tags: updatedTags,
-        lastWriteSource: 'automation',
-        updatedBy: 'automation (rule_3_auto_stage_cold)',
-        updatedAt: new Date().toISOString(),
+        transaction.set(
+          rollingRunRef,
+          {
+            ruleId: 'rule_3_auto_stage_cold',
+            ruleName: 'Cold Lead Tagging (Consecutive Unanswered)',
+            startedAt: todayStr,
+            finishedAt: new Date().toISOString(),
+            status: 'completed',
+            createdCount: FieldValue.increment(1),
+            appliedTags: FieldValue.arrayUnion({ customerId, tag: 'Cold' }),
+            undone: false,
+            triggeredBy,
+          },
+          { merge: true }
+        );
       });
 
-      transaction.set(
-        rollingRunRef,
-        {
-          ruleId: 'rule_3_auto_stage_cold',
-          ruleName: 'Cold Lead Auto-Stage',
-          startedAt: todayStr,
-          finishedAt: new Date().toISOString(),
-          status: 'completed',
-          createdCount: FieldValue.increment(1),
-          appliedTags: FieldValue.arrayUnion({ customerId, tag: 'Cold Lead' }),
-          undone: false,
-          triggeredBy: 'scheduled_cron',
-        },
-        { merge: true }
-      );
-    });
-
-    // Write activity log
-    await db.collection('activity_logs').add({
-      action: 'customer_stage_auto_transition',
-      byAutomation: true,
-      automationRuleId: 'rule_3_auto_stage_cold',
-      details: `Customer ${customerName} automatically moved to Cold stage after ${coldDaysThreshold} days of inactivity.`,
-      customerId,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+      // Write activity log
+      await db.collection('activity_logs').add({
+        action: 'customer_tag_add',
+        byAutomation: true,
+        automationRuleId: 'rule_3_auto_stage_cold',
+        details: `Customer ${customerName} tagged as "Cold" after ${consecutiveCount} consecutive unanswered outreach attempts. Stage was not changed.`,
+        customerId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
 
     stats.updated++;
+  }
+
+  // Update rule lastResult if not dryRun
+  if (!dryRun) {
+    await ruleRef.update({
+      lastRunAt: new Date().toISOString(),
+      lastResult: {
+        status: 'success',
+        createdCount: stats.updated,
+        skippedCount: stats.skipped,
+        skipReasons: { cap_hit: stats.pendingQueued, threshold_not_met: stats.skipped },
+        error: null,
+        timestamp: new Date().toISOString(),
+      },
+    });
   }
 
   return stats;

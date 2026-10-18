@@ -593,15 +593,145 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
       createdAt: getFieldValue().serverTimestamp(),
     });
 
+    // Also dispatch real Web Push notification to member's registered active devices
+    let pushDeliveredCount = 0;
+    try {
+      const devicesSnap = await adminSdk.firestore()
+        .collection('members')
+        .doc(targetEmail)
+        .collection('devices')
+        .where('active', '==', true)
+        .get();
+
+      const messaging = adminSdk.messaging();
+      for (const devDoc of devicesSnap.docs) {
+        const dev = devDoc.data();
+        if (dev.token) {
+          try {
+            await messaging.send({
+              token: dev.token,
+              notification: {
+                title: `🌅 Morning Plan — ${todayStr}`,
+                body: `You have ${tasksSnap.size} task(s) today and ${overdueSnap.size} overdue follow-up(s).`,
+              },
+              data: {
+                deepLink: '/tasks',
+                type: 'morning_plan',
+              },
+            });
+            pushDeliveredCount++;
+          } catch (pushErr) {
+            console.warn(`[Sample Morning Plan] Push failed for device ${dev.deviceId}:`, pushErr);
+          }
+        }
+      }
+    } catch (pushSearchErr) {
+      console.warn('[Sample Morning Plan] Could not query devices for push:', pushSearchErr);
+    }
+
     res.json({
       success: true,
-      message: `Sample morning plan generated and delivered as in-app notification to ${targetEmail}.`,
+      message: `Sample morning plan generated and delivered as in-app notification${pushDeliveredCount > 0 ? ` and sent to ${pushDeliveredCount} device(s)` : ''}.`,
       tasksTodayCount: tasksSnap.size,
       overdueTasksCount: overdueSnap.size,
+      pushDeliveredCount,
     });
   } catch (err: unknown) {
     console.error('Error dispatching sample morning plan:', err);
     res.status(500).json({ error: 'Failed to dispatch sample morning plan.' });
+  }
+});
+
+// 9b. Automation Hub: Trigger "Run Now" (Real or Dry-run Preview) for scheduled rules (Rule 3, Rule 4, Rule 5)
+// IMPORTANT: This route delegates to the SAME shared implementations used by Cloud Functions cron triggers.
+// There is exactly ONE implementation per rule, shared between cron and "Run Now".
+//
+// Shared module locations:
+//   Rule 3 → functions/src/rule_3_auto_cold.ts   → executeRule3AutoStageCold()
+//   Rule 4 → functions/src/rule_4_cold_revival.ts → executeRule4ColdRevival()
+//   Rule 5 → functions/src/rule_5_reorder.ts      → executeRule5ReorderReminders()
+app.post('/api/automations/run-now', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { ruleId, dryRun = false } = req.body;
+  if (!ruleId || typeof ruleId !== 'string') {
+    res.status(400).json({ error: 'ruleId is required' });
+    return;
+  }
+
+  try {
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+
+    // Verify rule exists and is enabled before delegating
+    const ruleDoc = await db.collection('automation_rules').doc(ruleId).get();
+    if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
+      res.status(400).json({ error: `Rule "${ruleId}" is currently disabled. Please enable it first.` });
+      return;
+    }
+
+    let result: any = { success: true };
+
+    if (ruleId === 'rule_3_auto_stage_cold') {
+      // Delegate to shared Rule 3 implementation
+      const { executeRule3AutoStageCold } = await import('../functions/src/rule_3_auto_cold.js');
+      const stats = await executeRule3AutoStageCold(db, {
+        dryRun: Boolean(dryRun),
+        triggeredBy: 'manual_test',
+      });
+      result = {
+        success: true,
+        dryRun: Boolean(dryRun),
+        evaluated: stats.evaluated,
+        updated: stats.updated,
+        message: dryRun
+          ? `[Preview] Evaluated ${stats.evaluated} leads: ${stats.updated} would receive the "Cold" tag.`
+          : `Evaluated ${stats.evaluated} leads: applied "Cold" tag to ${stats.updated}.`,
+      };
+
+    } else if (ruleId === 'rule_4_cold_revival') {
+      // Delegate to shared Rule 4 implementation
+      const { executeRule4ColdRevival } = await import('../functions/src/rule_4_cold_revival.js');
+      const stats = await executeRule4ColdRevival(db, {
+        forceRunNow: true,
+        dryRun: Boolean(dryRun),
+      });
+      result = {
+        success: true,
+        dryRun: Boolean(dryRun),
+        created: stats.created,
+        evaluated: stats.evaluated,
+        skipped: stats.skipped,
+        message: dryRun
+          ? `[Preview] Evaluated ${stats.evaluated} candidates: would create ${stats.created} revival call task(s).`
+          : `Created ${stats.created} revival call task(s) from ${stats.evaluated} evaluated candidates.`,
+      };
+
+    } else if (ruleId === 'rule_5_reorder_reminders') {
+      // Delegate to shared Rule 5 implementation
+      const { executeRule5ReorderReminders } = await import('../functions/src/rule_5_reorder.js');
+      const stats = await executeRule5ReorderReminders(db, {
+        forceRunNow: true,
+        dryRun: Boolean(dryRun),
+      });
+      result = {
+        success: true,
+        dryRun: Boolean(dryRun),
+        created: stats.created,
+        evaluated: stats.evaluated,
+        skippedFewerThanTwoOrders: stats.skippedFewerThanTwoOrders,
+        message: dryRun
+          ? `[Preview] Evaluated ${stats.evaluated} old customers: would create ${stats.created} reorder reminder task(s). (Skipped ${stats.skippedFewerThanTwoOrders} with <2 orders)`
+          : `Created ${stats.created} reorder reminder task(s). Skipped ${stats.skippedFewerThanTwoOrders} customer(s) with fewer than 2 orders.`,
+      };
+
+    } else {
+      res.status(400).json({ error: `Rule ${ruleId} does not support manual Run Now.` });
+      return;
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Run Now Error]:', err);
+    res.status(500).json({ error: 'Run now failed', details: err?.message || String(err) });
   }
 });
 

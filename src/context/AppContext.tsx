@@ -16,6 +16,8 @@ import {
   query,
   where,
   orderBy,
+  getDocs,
+  limit,
   serverTimestamp,
   Timestamp,
   writeBatch,
@@ -717,6 +719,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }, ...(customer.stageHistory || [])];
     }
 
+    let currentTags = [...(customer.tags || [])];
+
+    // Rule 3: Never changes stage. If answered, replied, or interested -> remove 'Cold' tag
+    if (log.outcome === 'Answered' || log.outcome === 'Interested') {
+      currentTags = currentTags.filter((t) => t !== 'Cold' && t !== 'Cold Lead');
+      updates.tags = currentTags;
+    } else if (log.outcome === 'No answer') {
+      // Check past outreach logs for consecutive 'No answer' outcomes
+      try {
+        const pastLogsSnap = await getDocs(
+          query(
+            collection(db, 'customers', customerId, 'outreach_logs'),
+            orderBy('loggedAt', 'desc'),
+            limit(5)
+          )
+        );
+        const pastLogs = pastLogsSnap.docs.map((d) => d.data());
+        // Counting consecutive 'No answer' outcomes including this one
+        let consecutiveNoAnswer = 1;
+        for (const pl of pastLogs) {
+          if (pl.outcome === 'No answer') {
+            consecutiveNoAnswer++;
+          } else {
+            break;
+          }
+        }
+
+        // Rule 3 default: 3 consecutive unanswered attempts -> add 'Cold' tag
+        // Do not add for 'Ordered', 'Old customer', or 'Not interested'
+        const isExcluded =
+          customer.status === 'Old customer' ||
+          customer.leadStage === 'Ordered' ||
+          customer.leadStage === 'Not interested';
+
+        if (consecutiveNoAnswer >= 3 && !isExcluded) {
+          if (!currentTags.includes('Cold')) {
+            currentTags.push('Cold');
+            updates.tags = currentTags;
+          }
+        }
+      } catch (err) {
+        console.warn('[Rule 3 Tag Check] Could not query past outreach logs:', err);
+      }
+    }
+
     await updateDoc(doc(db, 'customers', customerId), updates);
     await addDoc(collection(db, 'customers', customerId, 'outreach_logs'), outreachEntry);
     await logActivity('customer', customerId, 'update', `Logged ${log.channel} outcome (${log.outcome}) for ${customer.companyName}`);
@@ -933,6 +980,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ]
         : statusHistory;
 
+      // Remove 'Cold' tag or 'Reorder overdue' tag if present upon ordering
+      const existingTags: string[] = custData.tags || [];
+      const updatedTags = existingTags.filter(t => t !== 'Cold' && t !== 'Cold Lead' && t !== 'Reorder overdue');
+
       // Execute transaction writes
       transaction.set(orderRef, newOrder);
       transaction.update(customerRef, {
@@ -940,7 +991,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalRevenue: newRevenue,
         status: 'Old customer',
         leadStage: 'Ordered',
+        tags: updatedTags,
         statusHistory: nextStatusHistory,
+        lastWriteSource: 'manual_edit',
+        updatedBy: member?.email || user?.email || 'admin',
         updatedAt: now,
       });
     });

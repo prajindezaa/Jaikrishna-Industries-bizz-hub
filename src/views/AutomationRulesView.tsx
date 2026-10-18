@@ -22,6 +22,12 @@ import {
   Layers,
   ArrowRight,
   ShieldAlert,
+  RefreshCw,
+  Sparkles,
+  CheckCircle,
+  XCircle,
+  Info,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -53,6 +59,8 @@ export const AutomationRulesView: React.FC = () => {
   const [sampleCustomerIdx, setSampleCustomerIdx] = useState(0);
   const [sampleStage, setSampleStage] = useState('Sample sent');
   const [savingRuleId, setSavingRuleId] = useState<string | null>(null);
+  const [runningRuleId, setRunningRuleId] = useState<string | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<{ ruleId: string; message: string; data?: any } | null>(null);
   const [sendingSamplePlan, setSendingSamplePlan] = useState(false);
   const [undoingRunId, setUndoingRunId] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -99,16 +107,16 @@ export const AutomationRulesView: React.FC = () => {
 
   const defaultRule3: AutomationRuleDoc = {
     id: 'rule_3_auto_stage_cold',
-    name: 'Rule 3: Cold Lead Auto-Stage',
-    description: 'Automatically transitions active leads with no contact for 30+ days to Cold stage and tags them "Cold Lead".',
+    name: 'Rule 3: Auto "Cold" Tag (Consecutive Unanswered)',
+    description: 'After 3 consecutive unanswered calls/outreach attempts, automatically adds "Cold" tag. Removed instantly when lead answers, replies, or orders. Customer stage is never changed.',
     enabled: false,
     previewSeenAt: null,
     dailyCap: 25,
     workingDays: [1, 2, 3, 4, 5, 6],
     fallbackAssignee: 'actor',
     parameters: {
-      coldDaysThreshold: 30,
-      targetStages: ['Interested', 'Contacted', 'Sample sent'],
+      consecutiveUnansweredThreshold: 3,
+      targetStages: ['Interested', 'Contacted', 'Sample sent', 'New', 'Negotiation'],
     },
     updatedBy: 'system',
     updatedAt: new Date().toISOString(),
@@ -116,15 +124,16 @@ export const AutomationRulesView: React.FC = () => {
 
   const defaultRule4: AutomationRuleDoc = {
     id: 'rule_4_cold_revival',
-    name: 'Rule 4: Inactive Customer Revival',
-    description: 'Schedules revival check-in calls for past customers who have had no orders or interactions for 60+ days.',
+    name: 'Rule 4: Inactive Lead Revival',
+    description: 'Runs weekly every Monday at 09:00 IST. Active leads with no activity for 30+ days get "Revive: call {customer}" task spread across members (15/day cap, 30-day cooldown).',
     enabled: false,
     previewSeenAt: null,
     dailyCap: 15,
     workingDays: [1, 2, 3, 4, 5, 6],
-    fallbackAssignee: 'actor',
+    fallbackAssignee: 'round_robin',
     parameters: {
-      inactiveDaysThreshold: 60,
+      inactiveDaysThreshold: 30,
+      targetStages: ['Interested', 'Contacted', 'Sample sent', 'Negotiation'],
     },
     updatedBy: 'system',
     updatedAt: new Date().toISOString(),
@@ -132,15 +141,15 @@ export const AutomationRulesView: React.FC = () => {
 
   const defaultRule5: AutomationRuleDoc = {
     id: 'rule_5_reorder_reminders',
-    name: 'Rule 5: Order Reorder Reminders',
-    description: 'Proactively creates replenishment call tasks 45 days after a fulfilled wholesale agarbatti order.',
+    name: 'Rule 5: Smart Reorder Reminders',
+    description: 'Runs daily at 08:00 IST. For old customers with 2+ orders, calculates median order interval. If overdue by 2x median, tags "Reorder overdue" and schedules a check-in call task.',
     enabled: false,
     previewSeenAt: null,
     dailyCap: 20,
     workingDays: [1, 2, 3, 4, 5, 6],
-    fallbackAssignee: 'actor',
+    fallbackAssignee: 'round_robin',
     parameters: {
-      reorderCycleDays: 45,
+      overdueMultiplier: 2.0,
     },
     updatedBy: 'system',
     updatedAt: new Date().toISOString(),
@@ -312,6 +321,38 @@ export const AutomationRulesView: React.FC = () => {
       setActionNotice(`Error: ${err.message}`);
     } finally {
       setSendingSamplePlan(false);
+    }
+  };
+
+  // Trigger Run Now or Dry Run Preview
+  const handleRunNow = async (ruleId: string, dryRun = false) => {
+    setRunningRuleId(ruleId);
+    setActionNotice(null);
+    setDryRunResult(null);
+    try {
+      const idToken = user ? await user.getIdToken() : '';
+      const res = await fetch('/api/automations/run-now', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({ ruleId, dryRun }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to trigger automation execution.');
+      
+      if (dryRun) {
+        setDryRunResult({ ruleId, message: data.message, data });
+      } else {
+        setActionNotice(data.message || 'Automation executed successfully!');
+        loadData();
+        setTimeout(() => setActionNotice(null), 5000);
+      }
+    } catch (err: any) {
+      setActionNotice(`Execution Error: ${err.message}`);
+    } finally {
+      setRunningRuleId(null);
     }
   };
 
@@ -524,13 +565,13 @@ export const AutomationRulesView: React.FC = () => {
           </div>
         )}
 
-        {/* Card: Rule 3 (Cold Lead Auto-Stage) */}
+        {/* Card: Rule 3 (Cold Lead Auto-Tag on Consecutive Unanswered) */}
         {rules['rule_3_auto_stage_cold'] && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">
-                  Trigger: Scheduled Daily Check (&gt;= 30 Days Inactive)
+                  Trigger: 3 Consecutive Unanswered Attempts
                 </span>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -544,43 +585,72 @@ export const AutomationRulesView: React.FC = () => {
                 </label>
               </div>
 
-              <h2 className="text-base font-bold text-stone-900 font-display">Rule 3: Cold Lead Auto-Stage</h2>
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 3: Auto "Cold" Tag</h2>
               <p className="text-xs text-stone-600 mt-1 leading-relaxed">
-                Automatically transitions active leads with no updates for 30 days to Cold stage and tags them "Cold Lead" to prevent stale pipeline clutter.
+                Adds the "Cold" tag after 3 consecutive unanswered call logs. Removed immediately on answer, reply, or order. Does <em>not</em> change the lead stage.
               </p>
 
               <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
                 <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
-                  Daily Cap: {rules['rule_3_auto_stage_cold'].dailyCap} transitions/day
+                  Threshold: 3 Unanswered Calls
                 </span>
                 <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
-                  Threshold: 30 Days
+                  Stage Safe: Lead Stage Preserved
                 </span>
                 <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_3_auto_stage_cold'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
                   {rules['rule_3_auto_stage_cold'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
                 </span>
               </div>
 
-              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
-                <div className="font-semibold text-stone-800 text-[11px]">Applied Actions:</div>
-                <div className="text-[11px] text-stone-600">Sets leadStage to <span className="font-semibold text-stone-800">Cold</span> & appends tag <span className="font-semibold text-stone-800">Cold Lead</span></div>
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Run Result:</span>
+                  <span className={`font-mono ${rules['rule_3_auto_stage_cold'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_3_auto_stage_cold'].lastResult?.status || 'Never evaluated'}
+                  </span>
+                </div>
+                {rules['rule_3_auto_stage_cold'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_3_auto_stage_cold'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_3_auto_stage_cold'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_3_auto_stage_cold'].lastResult?.error}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
-              <span className="text-[11px] text-stone-500">Pipeline hygiene</span>
-              <span className="text-[10px] text-stone-400">Preserves notes</span>
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleRunNow('rule_3_auto_stage_cold', true)}
+                disabled={runningRuleId === 'rule_3_auto_stage_cold'}
+                className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-900 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-50 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-stone-500" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => handleRunNow('rule_3_auto_stage_cold', false)}
+                disabled={runningRuleId === 'rule_3_auto_stage_cold' || !rules['rule_3_auto_stage_cold'].enabled}
+                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-[#881337] hover:bg-[#6b0f2b] disabled:bg-stone-300 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer"
+              >
+                {runningRuleId === 'rule_3_auto_stage_cold' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>Run Now</span>
+              </button>
             </div>
           </div>
         )}
 
-        {/* Card: Rule 4 (Inactive Customer Revival) */}
+        {/* Card: Rule 4 (Inactive Lead Revival) */}
         {rules['rule_4_cold_revival'] && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-md border border-teal-200">
-                  Trigger: Scheduled Daily Check (Old Customer &gt;= 60d)
+                  Trigger: Weekly Monday 09:00 IST Cron
                 </span>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -594,9 +664,9 @@ export const AutomationRulesView: React.FC = () => {
                 </label>
               </div>
 
-              <h2 className="text-base font-bold text-stone-900 font-display">Rule 4: Inactive Customer Revival</h2>
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 4: Inactive Lead Revival Engine</h2>
               <p className="text-xs text-stone-600 mt-1 leading-relaxed">
-                Generates high-priority check-in call tasks for past wholesale clients who haven't ordered or called in 60+ days.
+                Weekly check: creates "Revive: call &#123;customer&#125;" tasks for active leads inactive for 30+ days. Rotates across 3 team members (15/day cap, 30-day cooldown).
               </p>
 
               <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
@@ -604,33 +674,65 @@ export const AutomationRulesView: React.FC = () => {
                   Daily Cap: {rules['rule_4_cold_revival'].dailyCap} tasks/day
                 </span>
                 <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
-                  Inactivity: 60 Days
+                  Cooldown: 30 Days
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Round-Robin: 3 Members
                 </span>
                 <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_4_cold_revival'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
                   {rules['rule_4_cold_revival'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
                 </span>
               </div>
 
-              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
-                <div className="font-semibold text-stone-800 text-[11px]">Target Audience:</div>
-                <div className="text-[11px] text-stone-600">Existing clients with status <span className="font-semibold text-stone-800">Old customer</span></div>
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Run Result:</span>
+                  <span className={`font-mono ${rules['rule_4_cold_revival'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_4_cold_revival'].lastResult?.status || 'Never evaluated'}
+                  </span>
+                </div>
+                {rules['rule_4_cold_revival'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_4_cold_revival'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_4_cold_revival'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_4_cold_revival'].lastResult?.error}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
-              <span className="text-[11px] text-stone-500">Scheduled revival calls</span>
-              <span className="text-[10px] text-stone-400">High priority</span>
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleRunNow('rule_4_cold_revival', true)}
+                disabled={runningRuleId === 'rule_4_cold_revival'}
+                className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-900 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-50 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-stone-500" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => handleRunNow('rule_4_cold_revival', false)}
+                disabled={runningRuleId === 'rule_4_cold_revival' || !rules['rule_4_cold_revival'].enabled}
+                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-[#881337] hover:bg-[#6b0f2b] disabled:bg-stone-300 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer"
+              >
+                {runningRuleId === 'rule_4_cold_revival' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>Run Now</span>
+              </button>
             </div>
           </div>
         )}
 
-        {/* Card: Rule 5 (Order Reorder Reminders) */}
+        {/* Card: Rule 5 (Smart Reorder Reminders) */}
         {rules['rule_5_reorder_reminders'] && (
           <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
-                  Trigger: Order Fulfilled + 45 Calendar Days
+                  Trigger: Daily 08:00 IST Cron (&gt;= 2 Orders)
                 </span>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
@@ -644,9 +746,9 @@ export const AutomationRulesView: React.FC = () => {
                 </label>
               </div>
 
-              <h2 className="text-base font-bold text-stone-900 font-display">Rule 5: Order Reorder Reminders</h2>
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 5: Smart Reorder Reminders</h2>
               <p className="text-xs text-stone-600 mt-1 leading-relaxed">
-                Proactively schedules reorder call tasks 45 days after a wholesale order is placed so customers never run out of agarbatti inventory.
+                Calculates median reorder cycle for clients with 2+ orders. Tags "Reorder overdue" and schedules a check-in call if overdue by 2x median.
               </p>
 
               <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
@@ -654,22 +756,54 @@ export const AutomationRulesView: React.FC = () => {
                   Daily Cap: {rules['rule_5_reorder_reminders'].dailyCap} tasks/day
                 </span>
                 <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
-                  Cycle: 45 Days
+                  Requires: 2+ Orders
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Overdue Threshold: 2x Median
                 </span>
                 <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_5_reorder_reminders'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
                   {rules['rule_5_reorder_reminders'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
                 </span>
               </div>
 
-              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
-                <div className="font-semibold text-stone-800 text-[11px]">Refill Automation:</div>
-                <div className="text-[11px] text-stone-600">Calculates working-day shift (Mon-Sat) for sales calls</div>
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Run Result:</span>
+                  <span className={`font-mono ${rules['rule_5_reorder_reminders'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_5_reorder_reminders'].lastResult?.status || 'Never evaluated'}
+                  </span>
+                </div>
+                {rules['rule_5_reorder_reminders'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_5_reorder_reminders'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_5_reorder_reminders'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_5_reorder_reminders'].lastResult?.error}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
-              <span className="text-[11px] text-stone-500">Repeat order booster</span>
-              <span className="text-[10px] text-stone-400">Order-linked</span>
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleRunNow('rule_5_reorder_reminders', true)}
+                disabled={runningRuleId === 'rule_5_reorder_reminders'}
+                className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-900 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-50 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-stone-500" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => handleRunNow('rule_5_reorder_reminders', false)}
+                disabled={runningRuleId === 'rule_5_reorder_reminders' || !rules['rule_5_reorder_reminders'].enabled}
+                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-[#881337] hover:bg-[#6b0f2b] disabled:bg-stone-300 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer"
+              >
+                {runningRuleId === 'rule_5_reorder_reminders' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>Run Now</span>
+              </button>
             </div>
           </div>
         )}
@@ -769,13 +903,32 @@ export const AutomationRulesView: React.FC = () => {
                 <div className="text-[11px] text-stone-600">• Meta ads waiting for results</div>
                 <div className="text-[11px] text-stone-600">• Upcoming festivals in next 7 days</div>
               </div>
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Dispatch Result:</span>
+                  <span className={`font-mono ${rules['rule_7_morning_plan'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_7_morning_plan'].lastResult?.status || 'Never dispatched'}
+                  </span>
+                </div>
+                {rules['rule_7_morning_plan'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_7_morning_plan'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_7_morning_plan'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_7_morning_plan'].lastResult?.error}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
               <button
                 onClick={handleSendSamplePlan}
                 disabled={sendingSamplePlan}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-900 text-white text-xs font-semibold shadow-xs transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-stone-800 hover:bg-stone-900 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               >
                 {sendingSamplePlan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                 <span>Send me a sample morning plan now</span>
@@ -793,6 +946,50 @@ export const AutomationRulesView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Dry Run Result Popup Alert */}
+      {dryRunResult && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-600" />
+                <h3 className="text-base font-bold text-stone-900 font-display">Dry-Run Preview Result</h3>
+              </div>
+              <button
+                onClick={() => setDryRunResult(null)}
+                className="text-stone-400 hover:text-stone-600 font-bold text-lg"
+              >
+                ×
+              </button>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+              <div className="font-semibold text-stone-800 text-sm">{dryRunResult.message}</div>
+              <p className="text-stone-600">
+                This was a safe preview simulation. <strong>Zero tasks or database modifications were written</strong>.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setDryRunResult(null)}
+                className="px-4 py-2 rounded-xl border border-stone-300 text-xs font-semibold text-stone-700 hover:bg-stone-50 cursor-pointer"
+              >
+                Close Preview
+              </button>
+              <button
+                onClick={() => {
+                  const rId = dryRunResult.ruleId;
+                  setDryRunResult(null);
+                  handleRunNow(rId, false);
+                }}
+                className="px-4 py-2 rounded-xl bg-[#881337] text-white text-xs font-semibold hover:bg-[#6b0f2b] shadow-xs cursor-pointer"
+              >
+                Execute Real Run Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Preview & Dry-Run Simulation Modal */}
       {previewRuleId === 'rule_1_auto_followup' && (

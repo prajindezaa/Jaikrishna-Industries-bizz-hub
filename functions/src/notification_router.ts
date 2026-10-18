@@ -20,7 +20,7 @@ export interface NotificationIntent {
   recipientEmail: string;
   title: string;
   body: string;
-  type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system';
+  type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system' | 'morning_plan';
   priority?: 'low' | 'normal' | 'high' | 'critical';
   deepLink?: string;
   dedupeKey: string;

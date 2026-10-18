@@ -7,8 +7,12 @@
  * Timezone: Asia/Kolkata (IST)
  */
 
+import { setGlobalOptions } from 'firebase-functions/v2';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+
+// Set global region to Asia/Kolkata (Mumbai) compatible region
+setGlobalOptions({ region: 'asia-south1', maxInstances: 10 });
 import * as admin from 'firebase-admin';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
@@ -103,16 +107,69 @@ export const checkRemindersScheduled = onSchedule(
       tasksByAssignee[assignee].push({ ...task, id: taskId });
     }
 
+    // Concurrency Lease Lock: ensure no overlapping cron runs (lease expires in 4 minutes)
+    const leaseRef = db.collection('system_settings').doc('cron_lease');
+    const nowMs = Date.now();
+    let acquiredLease = false;
+
+    await db.runTransaction(async (transaction) => {
+      const leaseDoc = await transaction.get(leaseRef);
+      const leaseData = leaseDoc.data() || {};
+      const expiresAt = leaseData.expiresAt || 0;
+
+      if (nowMs < expiresAt) {
+        console.log(`[Reminders Cron] Another cron execution is currently active (lease valid until ${new Date(expiresAt).toISOString()}). Skipping.`);
+        return;
+      }
+
+      transaction.set(leaseRef, {
+        lockedBy: 'checkRemindersScheduled',
+        lockedAt: nowMs,
+        expiresAt: nowMs + 4 * 60 * 1000, // 4-minute lease
+      });
+      acquiredLease = true;
+    });
+
+    if (!acquiredLease) return;
+
+    // Heartbeat document for health monitoring
+    await db.collection('system_settings').doc('automation_heartbeat').set({
+      lastScheduledRun: new Date().toISOString(),
+      lastCheckedTimeIST: `${currentTimeStr} IST`,
+      lastDateIST: todayStr,
+    }, { merge: true });
+
     // Process batched digest per member (Respecting daily email caps)
     for (const [memberEmail, pendingTasks] of Object.entries(tasksByAssignee)) {
       await sendMemberDigestEmail(memberEmail, pendingTasks);
     }
+
+    // Helper: update error onto rule document rather than swallowing
+    const recordRuleError = async (ruleId: string, error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await db.collection('automation_rules').doc(ruleId).set({
+          lastRunAt: new Date().toISOString(),
+          lastResult: {
+            status: 'error',
+            createdCount: 0,
+            skippedCount: 0,
+            skipReasons: {},
+            error: message,
+            timestamp: new Date().toISOString(),
+          },
+        }, { merge: true });
+      } catch (logErr) {
+        console.error(`Failed to record error for ${ruleId}:`, logErr);
+      }
+    };
 
     // Process Rule 7 Daily Morning Plan for members whose chosen delivery time matches current IST time
     try {
       await executeRule7MorningPlan(db, sendResendEmail);
     } catch (err) {
       console.error('[Rule 7 Execution Error]:', err);
+      await recordRuleError('rule_7_morning_plan', err);
     }
 
     // Process Rule 2 Idle Lead Re-Engagement
@@ -120,13 +177,15 @@ export const checkRemindersScheduled = onSchedule(
       await executeRule2IdleLeadCheck(db);
     } catch (err) {
       console.error('[Rule 2 Execution Error]:', err);
+      await recordRuleError('rule_2_idle_lead_reengagement', err);
     }
 
-    // Process Rule 3 Cold Lead Auto-Stage
+    // Process Rule 3 Cold Lead Auto-Stage & Consecutive Unanswered Tagging
     try {
       await executeRule3AutoStageCold(db);
     } catch (err) {
       console.error('[Rule 3 Execution Error]:', err);
+      await recordRuleError('rule_3_auto_stage_cold', err);
     }
 
     // Process Rule 4 Inactive Customer Revival
@@ -134,6 +193,7 @@ export const checkRemindersScheduled = onSchedule(
       await executeRule4ColdRevival(db);
     } catch (err) {
       console.error('[Rule 4 Execution Error]:', err);
+      await recordRuleError('rule_4_cold_revival', err);
     }
 
     // Process Rule 5 Order Reorder Reminders
@@ -141,6 +201,7 @@ export const checkRemindersScheduled = onSchedule(
       await executeRule5ReorderReminders(db);
     } catch (err) {
       console.error('[Rule 5 Execution Error]:', err);
+      await recordRuleError('rule_5_reorder_reminders', err);
     }
 
     // Process Rule 6 Festival Campaign Prep
@@ -148,7 +209,11 @@ export const checkRemindersScheduled = onSchedule(
       await executeRule6FestivalCampaignPrep(db);
     } catch (err) {
       console.error('[Rule 6 Execution Error]:', err);
+      await recordRuleError('rule_6_festival_campaign_prep', err);
     }
+
+    // Release lease
+    await leaseRef.set({ expiresAt: 0, lockedBy: null, releasedAt: Date.now() }, { merge: true });
   }
 );
 
@@ -364,32 +429,34 @@ export function isTaskUntouched(task: admin.firestore.DocumentData): boolean {
 }
 
 /**
- * RULE 1: Auto Follow-Up Tasks When Customer Stage Changes
- * Trigger: Firestore onDocumentUpdated on customers/{customerId}
+ * RULE 1: Auto Follow-Up Tasks When Customer Stage Changes (Create & Update)
+ * Trigger: Firestore onDocumentWritten on customers/{customerId}
  */
-export const onCustomerStageChangeRule1 = onDocumentUpdated(
-  'customers/{customerId}',
-  async (event) => {
-    const beforeData = event.data?.before.data();
-    const afterData = event.data?.after.data();
+export async function handleCustomerStageChangeRule1Core(
+  customerId: string,
+  beforeData: admin.firestore.DocumentData | null,
+  afterData: admin.firestore.DocumentData | null,
+  eventId: string = `evt_${Date.now()}`
+): Promise<{ status: string; reason?: string; taskId?: string }> {
+  // Document was deleted
+  if (!afterData) return { status: 'skipped', reason: 'document_deleted' };
 
-    if (!beforeData || !afterData) return;
+  const newStage = afterData.leadStage;
+  const previousStage = beforeData ? beforeData.leadStage : null;
 
-    // Filter early: ONLY proceed if stage changed
-    if (beforeData.leadStage === afterData.leadStage) return;
+    // Filter early: Proceed if stage was changed or if newly created with a defined stage
+    if (beforeData && beforeData.leadStage === afterData.leadStage) return { status: 'skipped', reason: 'stage_unchanged' };
+    if (!newStage) return { status: 'skipped', reason: 'no_stage' };
 
     // Prevent automation loops: ignore changes authored by system or automation
     if (afterData.lastWriteSource === 'system' || afterData.lastWriteSource === 'automation') {
       console.log('[Rule 1 Loop Guard] Skipping update authored by automation/system.');
-      return;
+      return { status: 'skipped', reason: 'loop_guard' };
     }
 
-    const customerId = event.params.customerId;
-    const newStage = afterData.leadStage;
-    const previousStage = beforeData.leadStage;
     const customerName = afterData.companyName || afterData.contactPerson || 'Customer';
 
-    console.log(`[Rule 1] Stage change detected for ${customerId}: "${previousStage}" -> "${newStage}" (Source: ${afterData.lastWriteSource})`);
+    console.log(`[Rule 1] Stage change detected for ${customerId}: "${previousStage || 'None'}" -> "${newStage}" (Source: ${afterData.lastWriteSource})`);
 
     // Fetch Rule 1 configuration
     const ruleRef = db.collection('automation_rules').doc('rule_1_auto_followup');
@@ -431,7 +498,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
 
     if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
       console.log('[Rule 1] Rule is currently OFF. Skipping new task creation.');
-      return;
+      return { status: 'skipped', reason: 'rule_disabled' };
     }
 
     const ruleData = ruleDoc.data()!;
@@ -440,14 +507,14 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
     // Check option "Do not create tasks during imports"
     if (afterData.lastWriteSource === 'bulk_import' && params.skipOnImport && !afterData.skipOnImportOverride) {
       console.log(`[Rule 1] Skipping task creation for bulk imported customer ${customerId}`);
-      return;
+      return { status: 'skipped', reason: 'skipped_on_import' };
     }
 
     // Lookup stage rule configuration for the new stage
-    const stageConfig = params.stages?.[newStage];
-    if (!stageConfig || !stageConfig.enabled) {
+    const stageConfig = params.stages?.[newStage] || params.stageConfigs?.[newStage];
+    if (!stageConfig || stageConfig.enabled === false) {
       console.log(`[Rule 1] No active stage rule for stage "${newStage}". Skipping.`);
-      return;
+      return { status: 'skipped', reason: 'no_stage_config' };
     }
 
     // Extra Duplicate Protection: check if an open automation task exists for same customer, rule, and stage
@@ -463,11 +530,11 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
 
     if (!openSameStageSnap.empty) {
       console.log(`[Rule 1] Duplicate protection: Open task for customer ${customerId} and stage "${newStage}" already exists.`);
-      return;
+      return { status: 'skipped', reason: 'duplicate_open_task_exists' };
     }
 
     // Determine deterministic timestamp from document saved timestamp or event ID
-    const stageTimestamp = afterData.updatedAt?.toMillis ? String(afterData.updatedAt.toMillis()) : event.id;
+    const stageTimestamp = afterData.updatedAt?.toMillis ? String(afterData.updatedAt.toMillis()) : eventId;
     const automationKey = crypto
       .createHash('sha256')
       .update(`rule_1:${customerId}:${newStage}:${stageTimestamp}`)
@@ -547,15 +614,16 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
         isRead: false,
         createdAt: FieldValue.serverTimestamp(),
       });
-      return;
+      return { status: 'queued_overflow', taskId: automationKey };
     }
 
     // Transactional task creation using automationKey as Document ID
     const taskDocRef = db.collection('tasks').doc(automationKey);
     const rollingRunRef = db.collection('automation_runs').doc(`rule_1_auto_followup_${todayStr}`);
 
-    const title = (stageConfig.titleTemplate || 'Follow up with {customer}')
+    const title = (stageConfig.titleTemplate || stageConfig.taskTitle || 'Follow up with {customer}')
       .replace(/{customer}/g, customerName)
+      .replace(/{name}/g, customerName)
       .replace(/{stage}/g, newStage)
       .replace(/{days}/g, String(stageConfig.daysAfter || 1));
 
@@ -624,6 +692,24 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
     });
 
     console.log(`[Rule 1] Transactionally created task ${automationKey} for ${assignedTo}.`);
+    return { status: 'created', taskId: automationKey };
+}
+
+/**
+ * RULE 1: Auto Follow-Up Tasks When Customer Stage Changes (Create & Update)
+ * Trigger: Firestore onDocumentWritten on customers/{customerId}
+ */
+export const onCustomerStageChangeRule1 = onDocumentWritten(
+  'customers/{customerId}',
+  async (event) => {
+    const beforeSnap = event.data?.before;
+    const afterSnap = event.data?.after;
+
+    if (!afterSnap || !afterSnap.exists) return;
+
+    const beforeData = (beforeSnap && beforeSnap.exists) ? (beforeSnap.data() as admin.firestore.DocumentData) : null;
+    const afterData = (afterSnap && afterSnap.exists) ? (afterSnap.data() as admin.firestore.DocumentData) : null;
+    await handleCustomerStageChangeRule1Core(event.params.customerId, beforeData, afterData, event.id);
   }
 );
 

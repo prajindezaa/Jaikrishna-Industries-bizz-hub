@@ -1,0 +1,383 @@
+/**
+ * E2E Emulator Tests for Automation Rules
+ *
+ * This script runs against the Firebase Firestore emulator (port 8080).
+ * It seeds TEST data, then exercises Rules 1, 3, 4, and 5, verifying real Firestore state.
+ *
+ * Usage:
+ *   1. Start emulators:  firebase emulators:start --only firestore
+ *   2. Run:              npx ts-node --esm src/e2e_emulator_test.ts
+ */
+
+import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
+
+// Point Admin SDK at emulator
+process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+
+if (!admin.apps.length) {
+  admin.initializeApp({ projectId: 'demo-jaikrishna-e2e' });
+}
+
+const db = getFirestore();
+
+// --- Shared helpers ---
+function daysBefore(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString();
+}
+
+function todayStr(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+}
+
+// Simple calculateWorkingDayDate stub for tests (the real one is in index.ts)
+function calculateWorkingDayDate(_base: Date, _daysToAdd: number, _workingDays: number[] = [1, 2, 3, 4, 5, 6]): string {
+  const d = new Date();
+  d.setDate(d.getDate() + _daysToAdd);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+}
+
+let passed = 0;
+let failed = 0;
+const results: Array<{ test: string; status: string; detail: string }> = [];
+
+function assert(condition: boolean, testName: string, detail: string = '') {
+  if (condition) {
+    passed++;
+    results.push({ test: testName, status: '✅ PASS', detail: detail || 'OK' });
+    console.log(`  ✅ PASS: ${testName}`);
+  } else {
+    failed++;
+    results.push({ test: testName, status: '❌ FAIL', detail: detail || 'Assertion failed' });
+    console.error(`  ❌ FAIL: ${testName} — ${detail}`);
+  }
+}
+
+// ============================================================================
+// SEED TEST DATA
+// ============================================================================
+async function seedData() {
+  console.log('\n📦 Seeding test data...');
+
+  // Allowed emails (team members)
+  await db.collection('allowed_emails').doc('member1@test.com').set({ allowed: true, role: 'Admin' });
+  await db.collection('allowed_emails').doc('member2@test.com').set({ allowed: true, role: 'Member' });
+  await db.collection('allowed_emails').doc('member3@test.com').set({ allowed: true, role: 'Member' });
+
+  // Automation rules
+  await db.collection('automation_rules').doc('rule_1_auto_followup').set({
+    enabled: true,
+    name: 'Auto Follow-up Tasks',
+    parameters: { stageConfigs: { 'Interested': { taskTitle: 'Follow up: call {name}', daysAfter: 1 } } },
+    workingDays: [1, 2, 3, 4, 5, 6],
+  });
+
+  await db.collection('automation_rules').doc('rule_3_auto_stage_cold').set({
+    enabled: true,
+    name: 'Consecutive Unanswered Cold Tagging',
+    parameters: { consecutiveUnansweredThreshold: 3, targetStages: ['Interested', 'Contacted', 'Sample sent', 'New', 'Negotiation'] },
+  });
+
+  await db.collection('automation_rules').doc('rule_4_cold_revival').set({
+    enabled: true,
+    name: 'Cold Lead Revival Engine',
+    parameters: {
+      inactiveDaysThreshold: 30,
+      cooldownDays: 30,
+      targetStages: ['Interested', 'Contacted', 'Sample sent', 'Negotiation'],
+      scheduledDayOfWeek: new Date().getDay(), // set to today so it runs
+      scheduledHour: new Date().getHours(),
+    },
+    dailyCap: 15,
+    workingDays: [1, 2, 3, 4, 5, 6],
+  });
+
+  await db.collection('automation_rules').doc('rule_5_reorder_reminders').set({
+    enabled: true,
+    name: 'Smart Reorder Reminders',
+    parameters: { leadDaysBefore: 2, overdueMultiplier: 2.0, scheduledHour: 8 },
+    dailyCap: 20,
+    workingDays: [1, 2, 3, 4, 5, 6],
+  });
+
+  // ---- Customers for Rule 3 ----
+  // Customer with 3 consecutive 'No answer' outcomes → should get Cold tag
+  await db.collection('customers').doc('cust_rule3_cold').set({
+    companyName: 'Rule3 Cold Test Co',
+    contactPerson: 'Test Person',
+    leadStage: 'Interested',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member1@test.com',
+    createdAt: daysBefore(60),
+    updatedAt: daysBefore(10),
+  });
+  // Add 3 'No answer' outreach logs
+  for (let i = 0; i < 3; i++) {
+    await db.collection('customers').doc('cust_rule3_cold').collection('outreach_logs').add({
+      outcome: 'No answer',
+      loggedAt: daysBefore(5 - i),
+      method: 'Call',
+    });
+  }
+
+  // Customer with 2 'No answer' + 1 'Answered' → should NOT get Cold tag
+  await db.collection('customers').doc('cust_rule3_safe').set({
+    companyName: 'Rule3 Safe Test Co',
+    contactPerson: 'Safe Person',
+    leadStage: 'Contacted',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member2@test.com',
+    createdAt: daysBefore(60),
+    updatedAt: daysBefore(10),
+  });
+  // First log is 'Answered' (most recent), then 2 'No answer'
+  await db.collection('customers').doc('cust_rule3_safe').collection('outreach_logs').add({
+    outcome: 'Answered',
+    loggedAt: daysBefore(1),
+    method: 'Call',
+  });
+  for (let i = 0; i < 2; i++) {
+    await db.collection('customers').doc('cust_rule3_safe').collection('outreach_logs').add({
+      outcome: 'No answer',
+      loggedAt: daysBefore(5 - i),
+      method: 'Call',
+    });
+  }
+
+  // ---- Customer for Rule 4 ----
+  // Inactive lead (no activity for 40 days) → should get revival task
+  await db.collection('customers').doc('cust_rule4_inactive').set({
+    companyName: 'Rule4 Inactive Lead Co',
+    contactPerson: 'Inactive Person',
+    leadStage: 'Interested',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    totalOrdersCount: 0,
+    assignedTo: 'member1@test.com',
+    createdAt: daysBefore(90),
+    updatedAt: daysBefore(40),
+  });
+
+  // ---- Customers for Rule 5 ----
+  // Old customer with 3 orders, median gap ~30 days, last order 60 days ago (severely overdue at 2x)
+  await db.collection('customers').doc('cust_rule5_overdue').set({
+    companyName: 'Rule5 Overdue Customer',
+    contactPerson: 'Overdue Person',
+    leadStage: 'Ordered',
+    status: 'Old customer',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member2@test.com',
+    createdAt: daysBefore(200),
+    updatedAt: daysBefore(60),
+  });
+  // 3 orders with ~30-day gaps
+  await db.collection('orders').doc('order_r5_1').set({
+    customerId: 'cust_rule5_overdue',
+    orderDate: daysBefore(150),
+    isDeleted: false,
+    totalAmount: 5000,
+  });
+  await db.collection('orders').doc('order_r5_2').set({
+    customerId: 'cust_rule5_overdue',
+    orderDate: daysBefore(120),
+    isDeleted: false,
+    totalAmount: 6000,
+  });
+  await db.collection('orders').doc('order_r5_3').set({
+    customerId: 'cust_rule5_overdue',
+    orderDate: daysBefore(90),
+    isDeleted: false,
+    totalAmount: 7000,
+  });
+
+  // Old customer with only 1 order → should be SKIPPED
+  await db.collection('customers').doc('cust_rule5_skip').set({
+    companyName: 'Rule5 Skip Customer',
+    contactPerson: 'Skip Person',
+    leadStage: 'Ordered',
+    status: 'Old customer',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member3@test.com',
+    createdAt: daysBefore(200),
+    updatedAt: daysBefore(60),
+  });
+  await db.collection('orders').doc('order_r5_skip_1').set({
+    customerId: 'cust_rule5_skip',
+    orderDate: daysBefore(100),
+    isDeleted: false,
+    totalAmount: 3000,
+  });
+
+  console.log('  ✅ Test data seeded.');
+}
+
+// ============================================================================
+// TEST: Rule 3 — Cold Tagging
+// ============================================================================
+async function testRule3() {
+  console.log('\n🧪 TEST: Rule 3 — Cold Tagging Engine');
+
+  const { executeRule3AutoStageCold } = await import('./rule_3_auto_cold');
+  const stats = await executeRule3AutoStageCold(db as any, { triggeredBy: 'manual_test' });
+
+  console.log(`  Rule 3 stats: evaluated=${stats.evaluated}, updated=${stats.updated}, skipped=${stats.skipped}`);
+
+  // Check: cust_rule3_cold should have 'Cold' tag
+  const coldDoc = await db.collection('customers').doc('cust_rule3_cold').get();
+  const coldTags: string[] = coldDoc.data()?.tags || [];
+  assert(coldTags.includes('Cold'), 'Rule 3: Customer with 3 No-answers gets Cold tag', `tags=${JSON.stringify(coldTags)}`);
+
+  // Check: cust_rule3_safe should NOT have 'Cold' tag
+  const safeDoc = await db.collection('customers').doc('cust_rule3_safe').get();
+  const safeTags: string[] = safeDoc.data()?.tags || [];
+  assert(!safeTags.includes('Cold'), 'Rule 3: Customer with Answered does NOT get Cold tag', `tags=${JSON.stringify(safeTags)}`);
+
+  // Now simulate an answered outreach for cold customer — Cold tag should be removed
+  // First add an 'Answered' outreach log to the cold customer
+  await db.collection('customers').doc('cust_rule3_cold').collection('outreach_logs').add({
+    outcome: 'Answered',
+    loggedAt: new Date().toISOString(),
+    method: 'Call',
+  });
+
+  // Run Rule 3 again — the Cold tag should be REMOVED since the latest outreach was answered
+  // Rule 3 counts Cold-tag removals as "updated" — so updated=1 means the removal happened
+  const stats2 = await executeRule3AutoStageCold(db as any, { triggeredBy: 'manual_test' });
+  console.log(`  Rule 3 (re-run after answer) stats: evaluated=${stats2.evaluated}, updated=${stats2.updated}`);
+
+  const coldDoc2 = await db.collection('customers').doc('cust_rule3_cold').get();
+  const coldTags2: string[] = coldDoc2.data()?.tags || [];
+  assert(!coldTags2.includes('Cold'), 'Rule 3: Cold tag REMOVED after answer', `tags=${JSON.stringify(coldTags2)}`);
+  assert(stats2.updated === 1, 'Rule 3: Re-run after answer counts 1 removal update', `updated=${stats2.updated}`);
+}
+
+// ============================================================================
+// TEST: Rule 4 — Cold Lead Revival
+// ============================================================================
+async function testRule4() {
+  console.log('\n🧪 TEST: Rule 4 — Cold Lead Revival');
+
+  const { executeRule4ColdRevival } = await import('./rule_4_cold_revival');
+
+  // Run with forceRunNow to bypass day-of-week check
+  const stats = await executeRule4ColdRevival(db as any, { forceRunNow: true });
+
+  console.log(`  Rule 4 stats: evaluated=${stats.evaluated}, created=${stats.created}, skipped=${stats.skipped}`);
+
+  assert(stats.created >= 1, 'Rule 4: Created at least 1 revival task', `created=${stats.created}`);
+
+  // Check that a task was created for cust_rule4_inactive
+  const tasksSnap = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule4_inactive')
+    .where('automationRuleId', '==', 'rule_4_cold_revival')
+    .where('isDeleted', '==', false)
+    .get();
+
+  assert(tasksSnap.size === 1, 'Rule 4: Exactly 1 task for inactive customer', `tasks found=${tasksSnap.size}`);
+
+  // Run again — should NOT create a duplicate (idempotency)
+  const stats2 = await executeRule4ColdRevival(db as any, { forceRunNow: true });
+  console.log(`  Rule 4 (re-run) stats: evaluated=${stats2.evaluated}, created=${stats2.created}, skipped=${stats2.skipped}`);
+
+  const tasksSnap2 = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule4_inactive')
+    .where('automationRuleId', '==', 'rule_4_cold_revival')
+    .where('isDeleted', '==', false)
+    .get();
+
+  assert(tasksSnap2.size === 1, 'Rule 4: Still exactly 1 task after re-run (no dupe)', `tasks found=${tasksSnap2.size}`);
+
+  // Dry run should not create anything
+  const statsDry = await executeRule4ColdRevival(db as any, { forceRunNow: true, dryRun: true });
+  console.log(`  Rule 4 (dryRun) stats: evaluated=${statsDry.evaluated}, created=${statsDry.created}`);
+  // dryRun reports "would create" count but doesn't write — task count should stay the same
+  const tasksSnap3 = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule4_inactive')
+    .where('automationRuleId', '==', 'rule_4_cold_revival')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(tasksSnap3.size === 1, 'Rule 4: dryRun does not create extra tasks', `tasks after dryRun=${tasksSnap3.size}`);
+}
+
+// ============================================================================
+// TEST: Rule 5 — Reorder Reminders
+// ============================================================================
+async function testRule5() {
+  console.log('\n🧪 TEST: Rule 5 — Reorder Reminders');
+
+  const { executeRule5ReorderReminders } = await import('./rule_5_reorder');
+
+  const stats = await executeRule5ReorderReminders(db as any, { forceRunNow: true });
+
+  console.log(`  Rule 5 stats: evaluated=${stats.evaluated}, created=${stats.created}, skipped=${stats.skipped}, skippedFewOrders=${stats.skippedFewerThanTwoOrders}`);
+
+  // cust_rule5_overdue has 3 orders with ~30d gaps, last 90 days ago → severely overdue
+  assert(stats.created >= 1, 'Rule 5: Created at least 1 reorder/check-in task', `created=${stats.created}`);
+
+  // cust_rule5_skip has only 1 order → should be skipped
+  assert(stats.skippedFewerThanTwoOrders >= 1, 'Rule 5: Skipped customer with <2 orders', `skippedFewOrders=${stats.skippedFewerThanTwoOrders}`);
+
+  // Check cust_rule5_overdue has the 'Reorder overdue' tag
+  const overdueDoc = await db.collection('customers').doc('cust_rule5_overdue').get();
+  const overdueTags: string[] = overdueDoc.data()?.tags || [];
+  assert(overdueTags.includes('Reorder overdue'), 'Rule 5: Overdue customer gets "Reorder overdue" tag', `tags=${JSON.stringify(overdueTags)}`);
+
+  // Simulate a new order → tag should be removable
+  // (Note: tag removal on new order is typically handled by a separate Firestore trigger, not Rule 5 itself)
+
+  // Idempotency: run again, should not create duplicate task
+  const stats2 = await executeRule5ReorderReminders(db as any, { forceRunNow: true });
+  const taskSnap2 = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule5_overdue')
+    .where('automationRuleId', '==', 'rule_5_reorder_reminders')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(taskSnap2.size === 1, 'Rule 5: No duplicate task after re-run', `tasks found=${taskSnap2.size}`);
+
+  // dryRun
+  const statsDry = await executeRule5ReorderReminders(db as any, { forceRunNow: true, dryRun: true });
+  console.log(`  Rule 5 (dryRun) stats: evaluated=${statsDry.evaluated}, created=${statsDry.created}`);
+}
+
+// ============================================================================
+// MAIN — Run all tests
+// ============================================================================
+async function main() {
+  try {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('  Jaikrishna Industries — E2E Emulator Tests');
+    console.log('  Firestore emulator at localhost:8080');
+    console.log('═══════════════════════════════════════════════════════');
+
+    await seedData();
+    await testRule3();
+    await testRule4();
+    await testRule5();
+
+    console.log('\n═══════════════════════════════════════════════════════');
+    console.log(`  RESULTS: ${passed} passed, ${failed} failed`);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('\n  Test                                                    | Status   | Detail');
+    console.log('  --------------------------------------------------------|----------|-------');
+    for (const r of results) {
+      console.log(`  ${r.test.padEnd(56)}| ${r.status.padEnd(9)}| ${r.detail}`);
+    }
+    console.log('');
+
+    process.exit(failed > 0 ? 1 : 0);
+  } catch (err) {
+    console.error('\n💥 Fatal error in E2E tests:', err);
+    process.exit(2);
+  }
+}
+
+main();
