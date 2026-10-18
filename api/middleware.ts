@@ -28,14 +28,18 @@ export function getFirebaseAdmin(): typeof admin {
     const privateKey = formatPrivateKey(process.env.FIREBASE_PRIVATE_KEY);
 
     if (clientEmail && privateKey) {
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-      });
-      console.log('[Firebase Admin] Initialized with Service Account Credentials.');
+      try {
+        admin.initializeApp({
+          credential: admin.credential.cert({
+            projectId,
+            clientEmail,
+            privateKey,
+          }),
+        });
+        console.log('[Firebase Admin] Initialized with Service Account Credentials.');
+      } catch (certErr) {
+        console.error('[Firebase Admin] Failed to initialize with Service Account Credentials:', certErr);
+      }
     } else {
       // Initialize with Application Default Credentials (ADC) if available
       try {
