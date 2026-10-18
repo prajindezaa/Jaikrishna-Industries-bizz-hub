@@ -1,0 +1,6 @@
+{
+  "name": "Jaikrishna Industries",
+  "description": "Business management web app and PWA for pooja products manufacturing, CRM, Meta ads leads, tasks, planning, and AI assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

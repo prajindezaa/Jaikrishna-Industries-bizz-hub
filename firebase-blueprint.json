@@ -1,0 +1,272 @@
+{
+  "entities": {
+    "allowed_emails": {
+      "title": "Allowed Emails",
+      "description": "Strict 3-member allowlist records for authentication enforcement",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "allowed": { "type": "boolean" },
+        "label": { "type": "string", "enum": ["Owner", "Admin", "Sales Manager"] },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "allowed"]
+    },
+    "team_members": {
+      "title": "Team Member",
+      "description": "Directory of the 3 equal team members",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "label": { "type": "string", "enum": ["Owner", "Admin", "Sales Manager"] },
+        "phone": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "fcmTokens": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "name", "label"]
+    },
+    "customers": {
+      "title": "Customer",
+      "description": "Retailers, wholesalers, temples, and Meta ad leads",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "businessName": { "type": "string" },
+        "phone": { "type": "string" },
+        "normalizedPhone": { "type": "string" },
+        "email": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "customerType": { "type": "string", "enum": ["Wholesaler", "Retailer", "Distributor", "Temple / Trust", "Direct Consumer"] },
+        "leadStage": { "type": "string", "enum": ["New Lead", "Contacted", "Sample Sent", "Quote Shared", "Negotiation", "Won", "Lost"] },
+        "leadSource": { "type": "string", "enum": ["Meta Ads", "Organic WhatsApp", "Reference", "Field Visit", "Website", "Direct Call"] },
+        "status": { "type": "string", "enum": ["Lead", "New customer", "Old customer", "Cold", "VIP"] },
+        "statusHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "changedAt": { "type": "string", "format": "date-time" },
+              "changedBy": { "type": "string" }
+            }
+          }
+        },
+        "assignedTo": { "type": "string" },
+        "totalOrdersCount": { "type": "number" },
+        "totalRevenue": { "type": "number" },
+        "lastContactDate": { "type": "string" },
+        "nextFollowUpDate": { "type": "string" },
+        "campaignId": { "type": "string" },
+        "notes": { "type": "string" },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "phone", "normalizedPhone", "status", "leadStage", "isDeleted"]
+    },
+    "tasks": {
+      "title": "Task & Follow-up",
+      "description": "Daily scheduled follow-ups, deliveries, and manufacturing tasks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["Follow-up Call", "WhatsApp Message", "Sample Dispatch", "Order Delivery", "Factory Production", "Payment Collection", "Review"] },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Urgent"] },
+        "status": { "type": "string", "enum": ["Pending", "In progress", "Done", "Missed", "Cancelled"] },
+        "recurring": { "type": "string", "enum": ["none", "daily", "weekly", "custom"] },
+        "isDeleted": { "type": "boolean" },
+        "deletedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "date", "startTime", "endTime", "assignedTo", "status", "isDeleted"]
+    },
+    "plans": {
+      "title": "Planning Target",
+      "description": "Daily/Weekly/Monthly manufacturing and sales plans",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "planType": { "type": "string", "enum": ["daily", "weekly", "monthly"] },
+        "period": { "type": "string" },
+        "productionTargets": { "type": "array" },
+        "salesRevenueTarget": { "type": "number" },
+        "leadsTarget": { "type": "number" },
+        "assignedTo": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "active", "completed", "archived"] },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["planType", "period", "status", "isDeleted"]
+    },
+    "meta_ads": {
+      "title": "Meta Ad Campaign",
+      "description": "Full lifecycle Meta advertising campaigns, targeting, budgets, creative assets, stage transitions, and results",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "occasion": { "type": "string" },
+        "festivalEventId": { "type": "string" },
+        "goal": { "type": "string" },
+        "stage": { "type": "string", "enum": ["Pending", "Published", "Waiting for result", "Fulfilled", "Cancelled"] },
+        "cancelReason": { "type": "string" },
+        "targetCustomers": { "type": "object" },
+        "plannedAudience": { "type": "object" },
+        "creatives": { "type": "array" },
+        "primaryText": { "type": "string" },
+        "headline": { "type": "string" },
+        "cta": { "type": "string" },
+        "destination": { "type": "string" },
+        "placements": { "type": "array" },
+        "dailyBudget": { "type": "number" },
+        "totalBudget": { "type": "number" },
+        "plannedStart": { "type": "string" },
+        "plannedEnd": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "checklist": { "type": "array" },
+        "stageHistory": { "type": "array" },
+        "results": { "type": "object" },
+        "derived": { "type": "object" },
+        "isHistorical": { "type": "boolean" },
+        "addedAsHistoricalBy": { "type": "string" },
+        "addedAsHistoricalAt": { "type": "string", "format": "date-time" },
+        "importBatchId": { "type": "string" },
+        "isDraft": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "goal", "stage", "createdBy", "isDeleted"]
+    },
+    "festival_events": {
+      "title": "Festival Event",
+      "description": "Pooja and festival calendar reference dates and notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "date": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["name", "date", "isDeleted"]
+    },
+    "orders": {
+      "title": "Order",
+      "description": "Sales orders with product line items, GST, and payment tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "tax": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["Pending", "Partial", "Paid"] },
+        "deliveryStatus": { "type": "string", "enum": ["Pending", "Dispatched", "Delivered", "Cancelled"] },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["orderNumber", "customerId", "totalAmount", "paymentStatus", "deliveryStatus", "isDeleted"]
+    },
+    "trash": {
+      "title": "Trash Archive",
+      "description": "Soft-deleted records with 30-day retention countdown and restore capability",
+      "type": "object",
+      "properties": {
+        "originalCollection": { "type": "string" },
+        "originalId": { "type": "string" },
+        "deletedBy": { "type": "string" },
+        "deletedAt": { "type": "string", "format": "date-time" },
+        "purgeAt": { "type": "string", "format": "date-time" },
+        "snapshot": { "type": "object" }
+      },
+      "required": ["originalCollection", "originalId", "deletedBy", "deletedAt", "purgeAt", "snapshot"]
+    },
+    "settings": {
+      "title": "Global Settings",
+      "description": "System-wide preferences including WhatsApp Hub guard settings",
+      "type": "object",
+      "properties": {
+        "whatsappHub": { "type": "object" }
+      }
+    },
+    "offers": {
+      "title": "Offer",
+      "description": "Standardized offers for same-offer guard",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "whatsapp_queues": {
+      "title": "WhatsApp Queue",
+      "description": "WhatsApp bulk message queue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "guardSettingsSnapshot": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "status", "createdBy", "createdAt"]
+    },
+    "whatsapp_queue_items": {
+      "title": "WhatsApp Queue Item",
+      "description": "Individual customer message in a queue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "queueId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "status": { "type": "string" },
+        "frequencyOverride": { "type": "object" },
+        "timingGuardTag": { "type": "string" },
+        "sentAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["queueId", "customerId", "status"]
+    },
+    "activity_logs": {
+      "title": "Activity Log",
+      "description": "Audit trail recording who created, updated, or deleted records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "memberEmail": { "type": "string" },
+        "memberName": { "type": "string" },
+        "action": { "type": "string" },
+        "entity": { "type": "string" },
+        "entityId": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["memberEmail", "action", "entity", "timestamp"]
+    }
+  }
+}

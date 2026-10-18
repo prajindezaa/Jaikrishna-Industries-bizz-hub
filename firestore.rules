@@ -1,0 +1,109 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function currentUserEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isInitialAdmin() {
+      return isAuthenticated() && currentUserEmail() == 'prajindezaa142@gmail.com';
+    }
+
+    function isAllowedMember() {
+      return isAuthenticated() && (
+        currentUserEmail() == 'prajindezaa142@gmail.com' ||
+        exists(/databases/$(database)/documents/allowed_emails/$(currentUserEmail()))
+      );
+    }
+
+    // Allowed Emails collection:
+    // Any allowed member can read the list. Initial admin can create/update.
+    // Allowed members can manage up to 3 member emails.
+    match /allowed_emails/{emailId} {
+      allow read: if isAllowedMember() || (isAuthenticated() && currentUserEmail() == emailId);
+      allow create, update, delete: if isAllowedMember();
+    }
+
+    // Team members directory
+    match /team_members/{memberId} {
+      allow read: if isAllowedMember();
+      allow write: if isAllowedMember();
+    }
+
+    // Customers CRM module
+    match /customers/{customerId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Tasks & Follow-ups module
+    match /tasks/{taskId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Planning Hub (daily/weekly/monthly goals)
+    match /plans/{planId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Meta Ads Hub (Campaigns, Pipeline, Results)
+    match /meta_ads/{adId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Festival & Pooja Events Calendar
+    match /festival_events/{eventId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Orders & Billing module
+    match /orders/{orderId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Trash & Soft-delete archive (retained for 30 days)
+    match /trash/{trashId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Activity Logs audit trail
+    match /activity_logs/{logId} {
+      allow read: if isAllowedMember();
+      allow create: if isAllowedMember();
+      allow update, delete: if false; // immutable audit log
+    }
+
+    // Settings (company profile, pooja catalog, WhatsApp templates, notification defaults)
+    match /settings/{settingId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // AI Chat history
+    match /ai_chats/{chatId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Notification logs & deduplication records
+    match /notification_log/{logId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // Saved search and filter presets
+    match /saved_filters/{filterId} {
+      allow read, write: if isAllowedMember();
+    }
+
+    // WhatsApp Hub
+    match /whatsapp_queues/{queueId} {
+      allow read, write: if isAllowedMember();
+    }
+    match /whatsapp_queue_items/{itemId} {
+      allow read, write: if isAllowedMember();
+    }
+  }
+}

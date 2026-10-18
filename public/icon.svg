@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#881337"/>
+      <stop offset="50%" stop-color="#701A24"/>
+      <stop offset="100%" stop-color="#4C0519"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#FDE68A"/>
+      <stop offset="50%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </linearGradient>
+    <linearGradient id="flameGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#EA580C"/>
+      <stop offset="40%" stop-color="#F59E0B"/>
+      <stop offset="70%" stop-color="#FEF08A"/>
+      <stop offset="100%" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle with safe padding -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)"/>
+  
+  <!-- Outer golden sacred aura -->
+  <circle cx="256" cy="256" r="210" fill="none" stroke="url(#goldGrad)" stroke-width="6" opacity="0.4" stroke-dasharray="12 8"/>
+  <circle cx="256" cy="256" r="195" fill="none" stroke="url(#goldGrad)" stroke-width="2" opacity="0.6"/>
+
+  <!-- Sacred Pooja Diya Lamp Base -->
+  <path d="M140 330 C150 400, 362 400, 372 330 C360 350, 152 350, 140 330 Z" fill="url(#goldGrad)" />
+  <ellipse cx="256" cy="330" rx="120" ry="24" fill="#B45309" />
+  <ellipse cx="256" cy="326" rx="112" ry="18" fill="url(#goldGrad)" />
+  
+  <!-- Camphor Tablet on Diya -->
+  <polygon points="230,320 282,320 295,310 243,310" fill="#FFFFFF" opacity="0.9" />
+  <polygon points="230,320 282,320 282,327 230,327" fill="#E2E8F0" opacity="0.9" />
+  
+  <!-- Sacred Camphor Flame -->
+  <!-- Outer Glow -->
+  <ellipse cx="256" cy="230" rx="48" ry="76" fill="#F59E0B" opacity="0.25" filter="url(#glow)"/>
+  
+  <!-- Primary Flame Petal -->
+  <path d="M256 120 C230 180, 196 230, 206 280 C216 330, 296 330, 306 280 C316 230, 282 180, 256 120 Z" fill="url(#flameGrad)" filter="url(#glow)"/>
+  
+  <!-- Inner White-Hot Camphor Flame -->
+  <path d="M256 160 C242 200, 226 235, 232 270 C238 300, 274 300, 280 270 C286 235, 270 200, 256 160 Z" fill="#FFFFFF" opacity="0.9"/>
+  
+  <!-- Brand Initials "JKI" -->
+  <text x="256" y="445" text-anchor="middle" font-family="'Plus Jakarta Sans', sans-serif" font-size="34" font-weight="800" fill="#FDE68A" letter-spacing="6">JAIKRISHNA</text>
+  <text x="256" y="475" text-anchor="middle" font-family="'Plus Jakarta Sans', sans-serif" font-size="18" font-weight="600" fill="#FFFFFF" opacity="0.8" letter-spacing="4">INDUSTRIES</text>
+</svg>
