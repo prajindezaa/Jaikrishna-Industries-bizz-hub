@@ -159,7 +159,10 @@ export async function getFcmToken(): Promise<string | null> {
 /**
  * Registers the device with the backend (/api/devices/register)
  */
-export async function syncDeviceWithServer(idToken: string, fcmToken?: string | null): Promise<boolean> {
+export async function syncDeviceWithServer(
+  idToken: string,
+  fcmToken?: string | null
+): Promise<{ success: boolean; message?: string }> {
   try {
     const deviceId = getOrCreateDeviceId();
     const token = fcmToken || localStorage.getItem(LAST_TOKEN_KEY) || '';
@@ -183,16 +186,25 @@ export async function syncDeviceWithServer(idToken: string, fcmToken?: string | 
       body: JSON.stringify(payload),
     });
 
-    if (response.ok) {
-      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
-      return true;
-    } else {
-      console.warn('[FCM] Device registration failed with status:', response.status);
-      return false;
+    const resText = await response.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(resText);
+    } catch {
+      data = { message: resText };
     }
-  } catch (error) {
+
+    if (response.ok && data.success) {
+      localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+      return { success: true, message: data.message || 'Device registered successfully' };
+    } else {
+      const errMsg = data.error || data.message || data.details || `Server responded with ${response.status}`;
+      console.warn('[FCM] Device registration rejected:', response.status, errMsg);
+      return { success: false, message: errMsg };
+    }
+  } catch (error: any) {
     console.error('[FCM] Error syncing device with server:', error);
-    return false;
+    return { success: false, message: error?.message || 'Network request failed' };
   }
 }
 

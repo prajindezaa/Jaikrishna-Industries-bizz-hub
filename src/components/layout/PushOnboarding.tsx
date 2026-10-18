@@ -104,12 +104,12 @@ export const PushOnboarding: React.FC = () => {
         setTestStatus('Could not generate FCM push token. Please check browser service worker / notification permissions.');
         return;
       }
-      const ok = await syncDeviceWithServer(idToken, token);
-      if (ok) {
+      const syncResult = await syncDeviceWithServer(idToken, token);
+      if (syncResult.success) {
         setHasToken(true);
         setTestStatus('Device & FCM push token registered successfully with server!');
       } else {
-        setTestStatus('Failed to sync device with backend server.');
+        setTestStatus(`Failed to sync device with backend server: ${syncResult.message}`);
       }
     } catch (err: any) {
       setTestStatus(`Registration error: ${err?.message || String(err)}`);
@@ -138,7 +138,10 @@ export const PushOnboarding: React.FC = () => {
 
       if (token) {
         setHasToken(true);
-        await syncDeviceWithServer(idToken, token);
+        const syncRes = await syncDeviceWithServer(idToken, token);
+        if (!syncRes.success) {
+          setTestStatus(`Token sync warning: ${syncRes.message}. Attempting push dispatch...`);
+        }
       } else {
         setTestStatus('Push delivery notice: Could not obtain FCM token. Ensure Notifications are allowed and Service Worker is active.');
         setLoading(false);

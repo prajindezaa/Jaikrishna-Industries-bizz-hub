@@ -124,23 +124,27 @@ app.post('/api/devices/register', standardRateLimiter, requireAuth, async (req: 
     // Invariant: Token belongs to only one active member device.
     // If token exists on another member's device or another device record, remove it to prevent stale cross-user leaks.
     if (token) {
-      const allDevicesWithToken = await db.collectionGroup('devices')
-        .where('token', '==', token)
-        .get();
+      try {
+        const allDevicesWithToken = await db.collectionGroup('devices')
+          .where('token', '==', token)
+          .get();
 
-      const batch = db.batch();
-      let hadDuplicates = false;
+        const batch = db.batch();
+        let hadDuplicates = false;
 
-      allDevicesWithToken.forEach((docSnap) => {
-        // If it's a different member or a different deviceId, delete or deactivate the stale record
-        if (docSnap.ref.parent.parent?.id !== memberEmail || docSnap.id !== deviceId) {
-          batch.delete(docSnap.ref);
-          hadDuplicates = true;
+        allDevicesWithToken.forEach((docSnap) => {
+          // If it's a different member or a different deviceId, delete or deactivate the stale record
+          if (docSnap.ref.parent.parent?.id !== memberEmail || docSnap.id !== deviceId) {
+            batch.delete(docSnap.ref);
+            hadDuplicates = true;
+          }
+        });
+
+        if (hadDuplicates) {
+          await batch.commit();
         }
-      });
-
-      if (hadDuplicates) {
-        await batch.commit();
+      } catch (cgErr) {
+        console.warn('[devices/register] Optional collectionGroup duplicate cleanup skipped:', cgErr);
       }
     }
 
