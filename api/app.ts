@@ -5,9 +5,6 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import dotenv from 'dotenv';
-import * as admin from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import {
   requireAuth,
   createRateLimiter,
@@ -16,8 +13,20 @@ import {
   AuthenticatedRequest,
 } from './middleware';
 
-dotenv.config();
-dotenv.config({ path: '.env.local' });
+// Load dotenv only during local dev (Vercel injects env vars natively)
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const dotenv = require('dotenv');
+  dotenv.config();
+  dotenv.config({ path: '.env.local' });
+} catch (_) {
+  // dotenv not available in Vercel production — this is expected
+}
+
+// Helper: get FieldValue from the initialized firebase-admin instance
+function getFieldValue() {
+  return getFirebaseAdmin().firestore.FieldValue;
+}
 
 const app = express();
 app.use(express.json());
@@ -272,7 +281,7 @@ app.post('/api/devices/test-push', standardRateLimiter, requireAuth, async (req:
         // Update lastSuccessAt
         await db.collection('members').doc(memberEmail).collection('devices').doc(dev.deviceId).update({
           lastSuccessAt: new Date().toISOString(),
-          lastErrorCode: FieldValue.delete(),
+          lastErrorCode: getFieldValue().delete(),
         });
       } catch (sendErr: any) {
         const errorCode = sendErr?.code || 'unknown_error';
@@ -436,7 +445,7 @@ app.post('/api/automations/undo', standardRateLimiter, requireAuth, async (req: 
         if (isUntouched) {
           batch.update(taskRef, {
             isDeleted: true,
-            deletedAt: FieldValue.serverTimestamp(),
+            deletedAt: getFieldValue().serverTimestamp(),
             deletedBy: `automation_undo by ${memberEmail}`,
             status: 'Missed',
             completionNote: `Rolled back via Automation Hub Undo by ${memberEmail}`,
@@ -464,7 +473,7 @@ app.post('/api/automations/undo', standardRateLimiter, requireAuth, async (req: 
       automationRuleId: runData.ruleId,
       runId,
       details: `Run for ${runData.ruleName} was undone by ${memberEmail}. ${undoneCount} pending task(s) moved to trash (${skippedCount} touched tasks preserved).`,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: getFieldValue().serverTimestamp(),
     });
 
     await batch.commit();
@@ -519,7 +528,7 @@ app.post('/api/automations/undo-task', standardRateLimiter, requireAuth, async (
     // Soft delete to Trash
     await taskRef.update({
       isDeleted: true,
-      deletedAt: FieldValue.serverTimestamp(),
+      deletedAt: getFieldValue().serverTimestamp(),
       deletedBy: `single_task_undo by ${memberEmail}`,
       status: 'Missed',
       completionNote: `Rolled back via Automation Hub single-task undo by ${memberEmail}`,
@@ -532,7 +541,7 @@ app.post('/api/automations/undo-task', standardRateLimiter, requireAuth, async (
       automationRuleId: task.automationRuleId,
       taskId,
       details: `Single automation task "${task.title}" was undone by ${memberEmail} and moved to trash.`,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: getFieldValue().serverTimestamp(),
     });
 
     res.json({
@@ -583,7 +592,7 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
       type: 'morning_plan',
       deepLink: '/tasks',
       isRead: false,
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt: getFieldValue().serverTimestamp(),
     });
 
     res.json({
@@ -775,131 +784,6 @@ ${context ? JSON.stringify(context, null, 2) : 'No live workspace context provid
   }
 });
 
-// 5. Automation Hub: Dispatch Sample Morning Plan (Admin/Member only)
-app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const adminApp = getFirebaseAdmin();
-    if (!adminApp) {
-      return res.status(500).json({ error: 'Firebase Admin not initialized on server.' });
-    }
-
-    const firestore = adminApp.firestore();
-    const email = req.memberEmail || req.user?.email || INITIAL_ADMIN_EMAIL;
-    const now = new Date();
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
-
-    // Create immediate sample in-app notification
-    await firestore.collection('notifications').add({
-      recipientEmail: email,
-      title: `Good Morning! Daily Plan — ${todayStr}`,
-      body: `Sample Daily Briefing: Follow-up calls scheduled, pending leads, and upcoming festival campaigns ready.`,
-      type: 'morning_plan',
-      deepLink: '/tasks',
-      isRead: false,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    // Write to activity logs
-    await firestore.collection('activity_logs').add({
-      action: 'automation_sample_morning_plan',
-      byAutomation: true,
-      details: `Dispatched sample morning plan preview to ${email}`,
-      recipientEmail: email,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    res.json({
-      success: true,
-      message: `Sample morning plan delivered to ${email} (In-App notification and Activity Log created).`,
-    });
-  } catch (err: any) {
-    console.error('Error dispatching sample morning plan:', err);
-    res.status(500).json({ error: err.message || 'Failed to dispatch sample morning plan.' });
-  }
-});
-
-// 6. Automation Hub: Undo a Specific Run Batch (Soft-delete untouched tasks to Trash)
-app.post('/api/automations/undo', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const { runId } = req.body;
-  if (!runId) {
-    return res.status(400).json({ error: 'runId is required for undo rollback.' });
-  }
-
-  try {
-    const adminApp = getFirebaseAdmin();
-    if (!adminApp) {
-      return res.status(500).json({ error: 'Firebase Admin not initialized on server.' });
-    }
-
-    const firestore = adminApp.firestore();
-    const runRef = firestore.collection('automation_runs').doc(runId);
-    const runDoc = await runRef.get();
-
-    if (!runDoc.exists) {
-      return res.status(404).json({ error: `Run document ${runId} not found.` });
-    }
-
-    const runData = runDoc.data() || {};
-    const taskIds: string[] = runData.createdTaskIds || [];
-    let undoneCount = 0;
-    const actorEmail = req.memberEmail || req.user?.email || 'admin';
-
-    for (const tid of taskIds) {
-      const taskRef = firestore.collection('tasks').doc(tid);
-      const taskDoc = await taskRef.get();
-      if (!taskDoc.exists) continue;
-
-      const t = taskDoc.data() || {};
-      // Untouched invariant: status Pending, no completedAt, no lastEditedBy
-      if (t.status === 'Pending' && !t.completedAt && !t.lastEditedBy) {
-        // Soft-delete to Trash
-        await firestore.collection('trash').add({
-          originalId: tid,
-          collection: 'tasks',
-          data: t,
-          deletedAt: FieldValue.serverTimestamp(),
-          deletedBy: actorEmail,
-          reason: `Automation Rollback: Run ${runId}`,
-        });
-
-        await taskRef.update({
-          isDeleted: true,
-          deletedAt: FieldValue.serverTimestamp(),
-          deletedBy: actorEmail,
-          status: 'Missed',
-        });
-
-        undoneCount++;
-      }
-    }
-
-    // Mark run document as undone
-    await runRef.update({
-      undone: true,
-      undoneAt: FieldValue.serverTimestamp(),
-      undoneBy: actorEmail,
-    });
-
-    // Write audit log
-    await firestore.collection('activity_logs').add({
-      action: 'automation_run_undone',
-      byAutomation: true,
-      details: `Rolled back automation run ${runId}: ${undoneCount} untouched task(s) moved to trash.`,
-      undoneCount,
-      performedBy: actorEmail,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    res.json({
-      success: true,
-      undoneCount,
-      message: `Rollback complete: ${undoneCount} pending task(s) moved to trash.`,
-    });
-  } catch (err: any) {
-    console.error('Error rolling back run:', err);
-    res.status(500).json({ error: err.message || 'Undo rollback failed.' });
-  }
-});
 
 // Global JSON error handler — must be last. Ensures any unhandled Express error
 // returns JSON instead of Vercel's plain-text "A server error has occurred".

@@ -22,14 +22,18 @@ export function formatPrivateKey(key?: string): string | undefined {
  * Initializes Firebase Admin SDK singleton with proper private key formatting
  */
 export function getFirebaseAdmin(): typeof admin {
-  // If running in development with emulators, ensure admin points to the local emulators
-  if (process.env.VITE_USE_EMULATORS === 'true' || process.env.NODE_ENV !== 'production') {
+  // Only point to local emulators if explicitly requested via VITE_USE_EMULATORS === 'true'
+  if (process.env.VITE_USE_EMULATORS === 'true') {
     if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
       process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
     }
     if (!process.env.FIRESTORE_EMULATOR_HOST) {
       process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
     }
+  } else {
+    // Ensure emulator host env vars are cleared so Admin SDK connects to live Firebase
+    delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+    delete process.env.FIRESTORE_EMULATOR_HOST;
   }
 
   const apps = (admin as any).apps || [];
