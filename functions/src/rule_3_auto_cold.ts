@@ -30,10 +30,33 @@ export async function executeRule3AutoStageCold(
 
   const stats = { evaluated: 0, updated: 0, skipped: 0, pendingQueued: 0, dryRun };
 
-  // 1. Fetch Rule 3 settings
+  // 1. Fetch Rule 3 settings (auto-initialize if missing)
   const ruleRef = db.collection('automation_rules').doc('rule_3_auto_stage_cold');
-  const ruleDoc = await ruleRef.get();
-  if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
+  let ruleDoc = await ruleRef.get();
+
+  if (!ruleDoc.exists) {
+    // Auto-initialize the rule document so toggling ON from UI works
+    const defaultRule = {
+      id: 'rule_3_auto_stage_cold',
+      name: 'Rule 3: Auto "Cold" Tag (Consecutive Unanswered)',
+      description: 'After 3 consecutive unanswered calls/outreach attempts, automatically adds "Cold" tag. Removed instantly when lead answers, replies, or orders. Customer stage is never changed.',
+      enabled: false,
+      previewSeenAt: null,
+      dailyCap: 25,
+      workingDays: [1, 2, 3, 4, 5, 6],
+      fallbackAssignee: 'actor',
+      parameters: {
+        consecutiveUnansweredThreshold: 3,
+        targetStages: ['Interested', 'Contacted', 'Sample sent', 'New', 'Negotiation'],
+      },
+      updatedBy: 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await ruleRef.set(defaultRule);
+    ruleDoc = await ruleRef.get();
+  }
+
+  if (!ruleDoc.data()?.enabled) {
     return stats;
   }
 
@@ -90,21 +113,23 @@ export async function executeRule3AutoStageCold(
     const latest = logs[0];
     if (latest.outcome === 'Answered' || latest.outcome === 'Interested') {
       if (currentTags.includes('Cold') || currentTags.includes('Cold Lead')) {
-        const cleanedTags = currentTags.filter((t) => t !== 'Cold' && t !== 'Cold Lead');
-        await custDoc.ref.update({
-          tags: cleanedTags,
-          lastWriteSource: 'automation',
-          updatedBy: 'automation (rule_3_auto_stage_cold)',
-          updatedAt: new Date().toISOString(),
-        });
-        await db.collection('activity_logs').add({
-          action: 'customer_tag_remove',
-          byAutomation: true,
-          automationRuleId: 'rule_3_auto_stage_cold',
-          details: `Removed Cold tag from ${customerName} after outreach interaction (${latest.outcome}).`,
-          customerId,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+        if (!dryRun) {
+          const cleanedTags = currentTags.filter((t) => t !== 'Cold' && t !== 'Cold Lead');
+          await custDoc.ref.update({
+            tags: cleanedTags,
+            lastWriteSource: 'automation',
+            updatedBy: 'automation (rule_3_auto_stage_cold)',
+            updatedAt: new Date().toISOString(),
+          });
+          await db.collection('activity_logs').add({
+            action: 'customer_tag_remove',
+            byAutomation: true,
+            automationRuleId: 'rule_3_auto_stage_cold',
+            details: `Removed Cold tag from ${customerName} after outreach interaction (${latest.outcome}).`,
+            customerId,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
         stats.updated++;
       }
       continue;
@@ -131,31 +156,42 @@ export async function executeRule3AutoStageCold(
       continue;
     }
 
-    // Daily Cap Check with Transaction
+    // Daily Cap Check with Transaction (skip cap mutation during dryRun)
     const capCounterRef = db.collection('system_settings').doc(`automation_cap_${todayStr}`);
     let isCapHit = false;
 
-    await db.runTransaction(async (transaction) => {
-      const capDoc = await transaction.get(capCounterRef);
+    if (!dryRun) {
+      await db.runTransaction(async (transaction) => {
+        const capDoc = await transaction.get(capCounterRef);
+        const capData = capDoc.data() || {};
+        const globalCount = capData.globalCount || 0;
+        const rule3Count = capData.rule3Count || 0;
+
+        if (globalCount >= (params.globalDailyCap || 60) || rule3Count >= dailyCap) {
+          isCapHit = true;
+          return;
+        }
+
+        transaction.set(
+          capCounterRef,
+          {
+            globalCount: globalCount + 1,
+            rule3Count: rule3Count + 1,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+    } else {
+      // During dryRun, read-only cap check (no mutation)
+      const capDoc = await capCounterRef.get();
       const capData = capDoc.data() || {};
       const globalCount = capData.globalCount || 0;
       const rule3Count = capData.rule3Count || 0;
-
       if (globalCount >= (params.globalDailyCap || 60) || rule3Count >= dailyCap) {
         isCapHit = true;
-        return;
       }
-
-      transaction.set(
-        capCounterRef,
-        {
-          globalCount: globalCount + 1,
-          rule3Count: rule3Count + 1,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    });
+    }
 
     const automationKey = crypto
       .createHash('sha256')
@@ -164,16 +200,18 @@ export async function executeRule3AutoStageCold(
 
     if (isCapHit) {
       stats.pendingQueued++;
-      await db.collection('automation_pending').doc(automationKey).set({
-        id: automationKey,
-        ruleId: 'rule_3_auto_stage_cold',
-        customerId,
-        customerName,
-        action: 'add_tag_cold',
-        queuedAt: new Date().toISOString(),
-        attemptedDate: todayStr,
-        status: 'queued',
-      });
+      if (!dryRun) {
+        await db.collection('automation_pending').doc(automationKey).set({
+          id: automationKey,
+          ruleId: 'rule_3_auto_stage_cold',
+          customerId,
+          customerName,
+          action: 'add_tag_cold',
+          queuedAt: new Date().toISOString(),
+          attemptedDate: todayStr,
+          status: 'queued',
+        });
+      }
       continue;
     }
 
