@@ -209,6 +209,17 @@ export const AssistantView: React.FC = () => {
         }),
       });
 
+      if (!response.ok) {
+        let errorDetails = '';
+        try {
+          const errJson = await response.json();
+          errorDetails = errJson.message || errJson.error || JSON.stringify(errJson);
+        } catch {
+          errorDetails = await response.text();
+        }
+        throw new Error(errorDetails || `HTTP ${response.status} ${response.statusText}`);
+      }
+
       const data = await response.json();
       const replyText =
         data.reply ||
