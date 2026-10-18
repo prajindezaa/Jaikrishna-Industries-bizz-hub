@@ -591,6 +591,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reason: 'Initial creation',
         },
       ],
+      stageHistory: [{
+        from: data.leadStage,
+        to: data.leadStage,
+        changedBy: member?.email || 'admin',
+        changedAt: now,
+      }],
+      lastWriteSource: 'manual_create',
+      updatedBy: member?.email || user?.email || 'admin',
       isDeleted: false,
       createdAt: now,
       updatedAt: now,
@@ -605,9 +613,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!db) throw new Error('Firestore not initialized');
     const existing = customers.find((c) => c.id === id);
 
+    const now = new Date().toISOString();
     let nextUpdates: Partial<Customer> = {
       ...updates,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      lastWriteSource: 'manual_edit' as const,
+      updatedBy: member?.email || user?.email || 'admin',
     };
 
     if (updates.phone) {
@@ -625,10 +636,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         from: existing.status,
         to: updates.status,
         changedBy: member?.email || 'admin',
-        changedAt: new Date().toISOString(),
+        changedAt: now,
         reason: 'Status updated from customer view',
       };
       nextUpdates.statusHistory = [historyEntry, ...(existing.statusHistory || [])];
+    }
+
+    // Lead stage transition tracking (for Rule 1 preview & audit)
+    if (existing && updates.leadStage && updates.leadStage !== existing.leadStage) {
+      const stageEntry = {
+        from: existing.leadStage,
+        to: updates.leadStage,
+        changedBy: member?.email || 'admin',
+        changedAt: now,
+      };
+      nextUpdates.stageHistory = [stageEntry, ...(existing.stageHistory || [])];
     }
 
     await updateDoc(doc(db, 'customers', id), nextUpdates);
@@ -668,18 +690,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const updates: Partial<Customer> = {
       updatedAt: now,
+      lastWriteSource: 'manual_edit' as const,
+      updatedBy: member?.email || user?.email || 'admin',
     };
 
     if (log.nextFollowUp) {
       updates.nextFollowUpDate = log.nextFollowUp;
     }
 
+    let newStage: typeof customer.leadStage | undefined;
     if (log.outcome === 'Interested') {
-      updates.leadStage = 'Interested';
+      newStage = 'Interested';
     } else if (log.outcome === 'Not interested') {
-      updates.leadStage = 'Not interested';
+      newStage = 'Not interested';
     } else if (customer.leadStage === 'New') {
-      updates.leadStage = 'Contacted';
+      newStage = 'Contacted';
+    }
+
+    if (newStage && newStage !== customer.leadStage) {
+      updates.leadStage = newStage;
+      updates.stageHistory = [{
+        from: customer.leadStage,
+        to: newStage,
+        changedBy: member?.email || 'admin',
+        changedAt: now,
+      }, ...(customer.stageHistory || [])];
     }
 
     await updateDoc(doc(db, 'customers', customerId), updates);
@@ -713,6 +748,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           totalOrdersCount: existing.totalOrdersCount,
           totalRevenue: existing.totalRevenue,
           statusHistory: existing.statusHistory,
+          lastWriteSource: 'bulk_import' as const,
+          updatedBy: member?.email || user?.email || 'import',
           updatedAt: new Date().toISOString(),
         });
         updated++;
@@ -734,6 +771,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               reason: 'Bulk CSV/Excel import',
             },
           ],
+          lastWriteSource: 'bulk_import' as const,
+          updatedBy: member?.email || user?.email || 'import',
           isDeleted: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

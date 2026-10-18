@@ -51,18 +51,24 @@ service cloud.firestore {
     }
 
     // Tasks & Follow-ups module: allowlisted members can manage tasks,
-    // but clients CANNOT forge automation markers (automationKey, automationRuleId, automationRunId, isAutomation, createdBy: 'automation').
+    // but clients CANNOT forge automation markers (automationKey, automationRuleId, automationRunId, automationStage, isAutomation, createdBy: 'automation').
     match /tasks/{taskId} {
       allow read: if isAllowedMember();
       allow create: if isAllowedMember() &&
         (!('isAutomation' in request.resource.data) || request.resource.data.isAutomation == false) &&
         (!('automationKey' in request.resource.data) || request.resource.data.automationKey == null) &&
+        (!('automationRuleId' in request.resource.data) || request.resource.data.automationRuleId == null) &&
+        (!('automationStage' in request.resource.data) || request.resource.data.automationStage == null) &&
+        (!('automationRunId' in request.resource.data) || request.resource.data.automationRunId == null) &&
         (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'automation');
       allow update: if isAllowedMember() &&
         // Protect automation fields from client mutation
         (!('automationKey' in request.resource.data) || request.resource.data.automationKey == resource.data.automationKey) &&
         (!('isAutomation' in request.resource.data) || request.resource.data.isAutomation == resource.data.isAutomation) &&
-        (!('automationRuleId' in request.resource.data) || request.resource.data.automationRuleId == resource.data.automationRuleId);
+        (!('automationRuleId' in request.resource.data) || request.resource.data.automationRuleId == resource.data.automationRuleId) &&
+        (!('automationStage' in request.resource.data) || request.resource.data.automationStage == resource.data.automationStage) &&
+        (!('automationRunId' in request.resource.data) || request.resource.data.automationRunId == resource.data.automationRunId) &&
+        (!('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy);
       allow delete: if isAllowedMember();
     }
 
@@ -112,6 +118,12 @@ service cloud.firestore {
     // Notification logs & deduplication records
     match /notification_log/{logId} {
       allow read, write: if isAllowedMember();
+    }
+
+    // In-app notifications
+    match /notifications/{notificationId} {
+      allow read, update: if isAllowedMember();
+      allow create: if isAllowedMember() || !isAuthenticated();
     }
 
     // Saved search and filter presets

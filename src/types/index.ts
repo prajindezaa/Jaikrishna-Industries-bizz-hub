@@ -459,9 +459,11 @@ export type LanguageCode = 'en' | 'ta';
 // -------------------------------------------------------------
 export type AutomationRuleId =
   | 'rule_1_auto_followup'
+  | 'rule_2_idle_lead_reengagement'
   | 'rule_3_auto_stage_cold'
   | 'rule_4_cold_revival'
   | 'rule_5_reorder_reminders'
+  | 'rule_6_festival_campaign_prep'
   | 'rule_7_morning_plan';
 
 export interface StageRuleConfig {

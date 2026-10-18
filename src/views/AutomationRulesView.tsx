@@ -26,7 +26,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
-import { AutomationRuleDoc, AutomationRunDoc } from '../types';
+import { AutomationRuleDoc, AutomationRunDoc, Customer } from '../types';
 import { db } from '../lib/firebase';
 import {
   collection,
@@ -80,6 +80,88 @@ export const AutomationRulesView: React.FC = () => {
     updatedAt: new Date().toISOString(),
   };
 
+  const defaultRule2: AutomationRuleDoc = {
+    id: 'rule_2_idle_lead_reengagement',
+    name: 'Rule 2: Idle Lead Re-Engagement',
+    description: 'Schedules a follow-up call task when an active lead has no updates for 7 days.',
+    enabled: false,
+    previewSeenAt: null,
+    dailyCap: 20,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    fallbackAssignee: 'actor',
+    parameters: {
+      idleDaysThreshold: 7,
+      targetStages: ['Interested', 'Contacted', 'Sample sent'],
+    },
+    updatedBy: 'system',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const defaultRule3: AutomationRuleDoc = {
+    id: 'rule_3_auto_stage_cold',
+    name: 'Rule 3: Cold Lead Auto-Stage',
+    description: 'Automatically transitions active leads with no contact for 30+ days to Cold stage and tags them "Cold Lead".',
+    enabled: false,
+    previewSeenAt: null,
+    dailyCap: 25,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    fallbackAssignee: 'actor',
+    parameters: {
+      coldDaysThreshold: 30,
+      targetStages: ['Interested', 'Contacted', 'Sample sent'],
+    },
+    updatedBy: 'system',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const defaultRule4: AutomationRuleDoc = {
+    id: 'rule_4_cold_revival',
+    name: 'Rule 4: Inactive Customer Revival',
+    description: 'Schedules revival check-in calls for past customers who have had no orders or interactions for 60+ days.',
+    enabled: false,
+    previewSeenAt: null,
+    dailyCap: 15,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    fallbackAssignee: 'actor',
+    parameters: {
+      inactiveDaysThreshold: 60,
+    },
+    updatedBy: 'system',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const defaultRule5: AutomationRuleDoc = {
+    id: 'rule_5_reorder_reminders',
+    name: 'Rule 5: Order Reorder Reminders',
+    description: 'Proactively creates replenishment call tasks 45 days after a fulfilled wholesale agarbatti order.',
+    enabled: false,
+    previewSeenAt: null,
+    dailyCap: 20,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    fallbackAssignee: 'actor',
+    parameters: {
+      reorderCycleDays: 45,
+    },
+    updatedBy: 'system',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const defaultRule6: AutomationRuleDoc = {
+    id: 'rule_6_festival_campaign_prep',
+    name: 'Rule 6: Festival Campaign Prep',
+    description: 'Alerts factory and sales team 14 days before pooja/festival events to prepare stock and promotional campaigns.',
+    enabled: false,
+    previewSeenAt: null,
+    dailyCap: 10,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    fallbackAssignee: 'actor',
+    parameters: {
+      lookaheadDays: 14,
+    },
+    updatedBy: 'system',
+    updatedAt: new Date().toISOString(),
+  };
+
   const defaultRule7: AutomationRuleDoc = {
     id: 'rule_7_morning_plan',
     name: 'Rule 7: Daily Morning Operations Plan',
@@ -103,12 +185,31 @@ export const AutomationRulesView: React.FC = () => {
 
   // Fetch Rules & Run History
   const loadData = async () => {
+    if (!db) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       // 1. Load Rules
       const rulesMap: Record<string, AutomationRuleDoc> = {};
       const r1Doc = await getDoc(doc(db, 'automation_rules', 'rule_1_auto_followup'));
       rulesMap['rule_1_auto_followup'] = r1Doc.exists() ? (r1Doc.data() as AutomationRuleDoc) : defaultRule1;
+
+      const r2Doc = await getDoc(doc(db, 'automation_rules', 'rule_2_idle_lead_reengagement'));
+      rulesMap['rule_2_idle_lead_reengagement'] = r2Doc.exists() ? (r2Doc.data() as AutomationRuleDoc) : defaultRule2;
+
+      const r3Doc = await getDoc(doc(db, 'automation_rules', 'rule_3_auto_stage_cold'));
+      rulesMap['rule_3_auto_stage_cold'] = r3Doc.exists() ? (r3Doc.data() as AutomationRuleDoc) : defaultRule3;
+
+      const r4Doc = await getDoc(doc(db, 'automation_rules', 'rule_4_cold_revival'));
+      rulesMap['rule_4_cold_revival'] = r4Doc.exists() ? (r4Doc.data() as AutomationRuleDoc) : defaultRule4;
+
+      const r5Doc = await getDoc(doc(db, 'automation_rules', 'rule_5_reorder_reminders'));
+      rulesMap['rule_5_reorder_reminders'] = r5Doc.exists() ? (r5Doc.data() as AutomationRuleDoc) : defaultRule5;
+
+      const r6Doc = await getDoc(doc(db, 'automation_rules', 'rule_6_festival_campaign_prep'));
+      rulesMap['rule_6_festival_campaign_prep'] = r6Doc.exists() ? (r6Doc.data() as AutomationRuleDoc) : defaultRule6;
 
       const r7Doc = await getDoc(doc(db, 'automation_rules', 'rule_7_morning_plan'));
       rulesMap['rule_7_morning_plan'] = r7Doc.exists() ? (r7Doc.data() as AutomationRuleDoc) : defaultRule7;
@@ -130,32 +231,39 @@ export const AutomationRulesView: React.FC = () => {
     loadData();
   }, []);
 
-  // Toggle Rule (Enforcing Preview Requirement)
-  const handleToggleRule = async (ruleId: string, currentVal: boolean) => {
+  // Toggle Rule (Enforcing Preview Requirement strictly for Rule 1)
+  const handleToggleRule = async (ruleId: string, currentVal: boolean, forceEnable = false) => {
+    if (!db) {
+      console.warn('Cannot toggle: Firestore db not initialized');
+      return;
+    }
     const targetRule = rules[ruleId];
     if (!targetRule) return;
 
-    // Hard Rule: Cannot turn ON without having viewed the preview first
-    if (!currentVal && !targetRule.previewSeenAt) {
+    // Hard Rule: Rule 1 cannot turn ON without having viewed the preview first
+    if (ruleId === 'rule_1_auto_followup' && !currentVal && !targetRule.previewSeenAt && !forceEnable) {
       setPreviewRuleId(ruleId);
-      setActionNotice('Please review the rule preview before enabling.');
+      setActionNotice('Please review the rule preview before enabling Rule 1.');
       return;
     }
 
     const newVal = !currentVal;
     setSavingRuleId(ruleId);
     try {
+      const now = new Date().toISOString();
       const updated = {
         ...targetRule,
         enabled: newVal,
+        previewSeenAt: targetRule.previewSeenAt || (newVal ? now : null),
         updatedBy: user?.email || 'admin',
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
       };
       await setDoc(doc(db, 'automation_rules', ruleId), updated, { merge: true });
       setRules((prev) => ({ ...prev, [ruleId]: updated }));
       setActionNotice(`Rule ${newVal ? 'ENABLED' : 'DISABLED'} successfully.`);
       setTimeout(() => setActionNotice(null), 3500);
     } catch (err: any) {
+      console.error('Error toggling rule:', err);
       setActionNotice(`Error updating rule: ${err.message}`);
     } finally {
       setSavingRuleId(null);
@@ -164,6 +272,7 @@ export const AutomationRulesView: React.FC = () => {
 
   // Mark Preview Seen
   const handleMarkPreviewSeen = async (ruleId: string) => {
+    if (!db) return;
     const targetRule = rules[ruleId];
     if (!targetRule) return;
 
@@ -241,7 +350,12 @@ export const AutomationRulesView: React.FC = () => {
     return d.toISOString().slice(0, 10);
   };
 
-  const selectedCustomer = customers[sampleCustomerIdx] || { companyName: 'Shri Murugan Camphor Stores', contactPerson: 'Murugan', assignedTo: 'prajindezaa142@gmail.com' };
+  const selectedCustomer = (customers[sampleCustomerIdx] || {
+    id: 'sample',
+    companyName: 'Shri Murugan Camphor Stores',
+    contactPerson: 'Murugan',
+    assignedTo: 'prajindezaa142@gmail.com',
+  }) as Customer | { companyName: string; contactPerson: string; assignedTo?: string };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
@@ -351,6 +465,261 @@ export const AutomationRulesView: React.FC = () => {
               <span className="text-[10px] text-stone-400">
                 {rules['rule_1_auto_followup'].previewSeenAt ? 'Preview reviewed ✓' : 'Preview required before enable'}
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* Card: Rule 2 (Idle Lead Re-Engagement) */}
+        {rules['rule_2_idle_lead_reengagement'] && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200">
+                  Trigger: Scheduled Daily Check (Idle &gt; 7 Days)
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rules['rule_2_idle_lead_reengagement'].enabled}
+                    onChange={() => handleToggleRule('rule_2_idle_lead_reengagement', rules['rule_2_idle_lead_reengagement'].enabled)}
+                    disabled={savingRuleId === 'rule_2_idle_lead_reengagement'}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#881337]"></div>
+                </label>
+              </div>
+
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 2: Idle Lead Re-Engagement</h2>
+              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                Automatically schedules follow-up calls when active leads in Interested, Contacted, or Sample sent have no updates for 7 days.
+              </p>
+
+              {/* Status & Daily Cap Badges */}
+              <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Daily Cap: {rules['rule_2_idle_lead_reengagement'].dailyCap} tasks/day
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Idle Threshold: 7 Days
+                </span>
+                <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_2_idle_lead_reengagement'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
+                  {rules['rule_2_idle_lead_reengagement'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
+                </span>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <div className="font-semibold text-stone-800 text-[11px]">Targeted Active Stages:</div>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  <span className="px-2 py-0.5 rounded-md bg-white border border-stone-200 text-[10px] font-medium text-stone-700">Interested</span>
+                  <span className="px-2 py-0.5 rounded-md bg-white border border-stone-200 text-[10px] font-medium text-stone-700">Contacted</span>
+                  <span className="px-2 py-0.5 rounded-md bg-white border border-stone-200 text-[10px] font-medium text-stone-700">Sample sent</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">Evaluates daily in Asia/Kolkata</span>
+              <span className="text-[10px] text-stone-400">Safe duplicate-check</span>
+            </div>
+          </div>
+        )}
+
+        {/* Card: Rule 3 (Cold Lead Auto-Stage) */}
+        {rules['rule_3_auto_stage_cold'] && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200">
+                  Trigger: Scheduled Daily Check (&gt;= 30 Days Inactive)
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rules['rule_3_auto_stage_cold'].enabled}
+                    onChange={() => handleToggleRule('rule_3_auto_stage_cold', rules['rule_3_auto_stage_cold'].enabled)}
+                    disabled={savingRuleId === 'rule_3_auto_stage_cold'}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#881337]"></div>
+                </label>
+              </div>
+
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 3: Cold Lead Auto-Stage</h2>
+              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                Automatically transitions active leads with no updates for 30 days to Cold stage and tags them "Cold Lead" to prevent stale pipeline clutter.
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Daily Cap: {rules['rule_3_auto_stage_cold'].dailyCap} transitions/day
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Threshold: 30 Days
+                </span>
+                <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_3_auto_stage_cold'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
+                  {rules['rule_3_auto_stage_cold'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
+                </span>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <div className="font-semibold text-stone-800 text-[11px]">Applied Actions:</div>
+                <div className="text-[11px] text-stone-600">Sets leadStage to <span className="font-semibold text-stone-800">Cold</span> & appends tag <span className="font-semibold text-stone-800">Cold Lead</span></div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">Pipeline hygiene</span>
+              <span className="text-[10px] text-stone-400">Preserves notes</span>
+            </div>
+          </div>
+        )}
+
+        {/* Card: Rule 4 (Inactive Customer Revival) */}
+        {rules['rule_4_cold_revival'] && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-teal-700 bg-teal-50 px-2.5 py-1 rounded-md border border-teal-200">
+                  Trigger: Scheduled Daily Check (Old Customer &gt;= 60d)
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rules['rule_4_cold_revival'].enabled}
+                    onChange={() => handleToggleRule('rule_4_cold_revival', rules['rule_4_cold_revival'].enabled)}
+                    disabled={savingRuleId === 'rule_4_cold_revival'}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#881337]"></div>
+                </label>
+              </div>
+
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 4: Inactive Customer Revival</h2>
+              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                Generates high-priority check-in call tasks for past wholesale clients who haven't ordered or called in 60+ days.
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Daily Cap: {rules['rule_4_cold_revival'].dailyCap} tasks/day
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Inactivity: 60 Days
+                </span>
+                <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_4_cold_revival'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
+                  {rules['rule_4_cold_revival'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
+                </span>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <div className="font-semibold text-stone-800 text-[11px]">Target Audience:</div>
+                <div className="text-[11px] text-stone-600">Existing clients with status <span className="font-semibold text-stone-800">Old customer</span></div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">Scheduled revival calls</span>
+              <span className="text-[10px] text-stone-400">High priority</span>
+            </div>
+          </div>
+        )}
+
+        {/* Card: Rule 5 (Order Reorder Reminders) */}
+        {rules['rule_5_reorder_reminders'] && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
+                  Trigger: Order Fulfilled + 45 Calendar Days
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rules['rule_5_reorder_reminders'].enabled}
+                    onChange={() => handleToggleRule('rule_5_reorder_reminders', rules['rule_5_reorder_reminders'].enabled)}
+                    disabled={savingRuleId === 'rule_5_reorder_reminders'}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#881337]"></div>
+                </label>
+              </div>
+
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 5: Order Reorder Reminders</h2>
+              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                Proactively schedules reorder call tasks 45 days after a wholesale order is placed so customers never run out of agarbatti inventory.
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Daily Cap: {rules['rule_5_reorder_reminders'].dailyCap} tasks/day
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Cycle: 45 Days
+                </span>
+                <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_5_reorder_reminders'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
+                  {rules['rule_5_reorder_reminders'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
+                </span>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <div className="font-semibold text-stone-800 text-[11px]">Refill Automation:</div>
+                <div className="text-[11px] text-stone-600">Calculates working-day shift (Mon-Sat) for sales calls</div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">Repeat order booster</span>
+              <span className="text-[10px] text-stone-400">Order-linked</span>
+            </div>
+          </div>
+        )}
+
+        {/* Card: Rule 6 (Festival Campaign Prep) */}
+        {rules['rule_6_festival_campaign_prep'] && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-200">
+                  Trigger: Upcoming Festival (14 Days Lookahead)
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rules['rule_6_festival_campaign_prep'].enabled}
+                    onChange={() => handleToggleRule('rule_6_festival_campaign_prep', rules['rule_6_festival_campaign_prep'].enabled)}
+                    disabled={savingRuleId === 'rule_6_festival_campaign_prep'}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-stone-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-stone-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#881337]"></div>
+                </label>
+              </div>
+
+              <h2 className="text-base font-bold text-stone-900 font-display">Rule 6: Festival Campaign Prep</h2>
+              <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                Monitors pooja and festival calendar dates; schedules preparation and promotional tasks 14 days before peak seasonal demand.
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-stone-100 flex flex-wrap gap-2 text-[11px]">
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Daily Cap: {rules['rule_6_festival_campaign_prep'].dailyCap} tasks/day
+                </span>
+                <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 font-medium">
+                  Lookahead: 14 Days
+                </span>
+                <span className={`px-2 py-0.5 rounded font-medium ${rules['rule_6_festival_campaign_prep'].enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-100 text-stone-500'}`}>
+                  {rules['rule_6_festival_campaign_prep'].enabled ? 'Active (ON)' : 'Disabled (OFF)'}
+                </span>
+              </div>
+
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
+                <div className="font-semibold text-stone-800 text-[11px]">Seasonality:</div>
+                <div className="text-[11px] text-stone-600">Integrates with festival_events to alert factory & ad managers</div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
+              <span className="text-[11px] text-stone-500">Advance stock & ad prep</span>
+              <span className="text-[10px] text-stone-400">Zero duplicates</span>
             </div>
           </div>
         )}
@@ -509,11 +878,30 @@ export const AutomationRulesView: React.FC = () => {
 
             <div className="flex justify-end gap-2 pt-2">
               <button
-                onClick={() => setPreviewRuleId(null)}
+                onClick={async () => {
+                  if (previewRuleId) {
+                    await handleMarkPreviewSeen(previewRuleId);
+                  }
+                  setPreviewRuleId(null);
+                }}
                 className="px-4 py-2 rounded-xl border border-stone-300 text-xs font-semibold text-stone-700 hover:bg-stone-50"
               >
                 Close Preview
               </button>
+              {previewRuleId && !rules[previewRuleId]?.enabled && (
+                <button
+                  onClick={async () => {
+                    const rId = previewRuleId;
+                    await handleMarkPreviewSeen(rId);
+                    setPreviewRuleId(null);
+                    // Pass forceEnable = true since user explicitly clicked enable from preview
+                    await handleToggleRule(rId, false, true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 shadow-xs cursor-pointer"
+                >
+                  I have reviewed the preview — Enable Rule 1
+                </button>
+              )}
             </div>
           </div>
         </div>

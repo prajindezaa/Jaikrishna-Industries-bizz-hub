@@ -10,14 +10,27 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import * as admin from 'firebase-admin';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { executeRule7MorningPlan } from './rule_7_morning_plan';
+export { executeRule7MorningPlan } from './rule_7_morning_plan';
+import { executeRule2IdleLeadCheck } from './rule_2_idle_lead';
+export { executeRule2IdleLeadCheck } from './rule_2_idle_lead';
+import { executeRule3AutoStageCold } from './rule_3_auto_cold';
+export { executeRule3AutoStageCold } from './rule_3_auto_cold';
+import { executeRule4ColdRevival } from './rule_4_cold_revival';
+export { executeRule4ColdRevival } from './rule_4_cold_revival';
+import { executeRule5ReorderReminders } from './rule_5_reorder';
+export { executeRule5ReorderReminders } from './rule_5_reorder';
+import { executeRule6FestivalCampaignPrep } from './rule_6_festival';
+export { executeRule6FestivalCampaignPrep } from './rule_6_festival';
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-const db = admin.firestore();
+const db = getFirestore();
 
 // 1. Scheduled Reminder Engine (Every 5 Minutes)
 export const checkRemindersScheduled = onSchedule(
@@ -60,7 +73,7 @@ export const checkRemindersScheduled = onSchedule(
       if (isPastDay || isPastEndTime) {
         await doc.ref.update({
           status: 'Missed',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         });
 
         // Log peer alert notification for other members
@@ -71,7 +84,7 @@ export const checkRemindersScheduled = onSchedule(
           type: 'missed',
           deepLink: `/tasks?id=${taskId}`,
           isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         });
       }
 
@@ -88,11 +101,46 @@ export const checkRemindersScheduled = onSchedule(
       await sendMemberDigestEmail(memberEmail, pendingTasks);
     }
 
-    // Process Rule 7 Daily Morning Plan for members whose delivery time matches current IST time
+    // Process Rule 7 Daily Morning Plan for members whose chosen delivery time matches current IST time
     try {
-      await executeMorningPlanCheck();
+      await executeRule7MorningPlan(db, sendResendEmail);
     } catch (err) {
       console.error('[Rule 7 Execution Error]:', err);
+    }
+
+    // Process Rule 2 Idle Lead Re-Engagement
+    try {
+      await executeRule2IdleLeadCheck(db);
+    } catch (err) {
+      console.error('[Rule 2 Execution Error]:', err);
+    }
+
+    // Process Rule 3 Cold Lead Auto-Stage
+    try {
+      await executeRule3AutoStageCold(db);
+    } catch (err) {
+      console.error('[Rule 3 Execution Error]:', err);
+    }
+
+    // Process Rule 4 Inactive Customer Revival
+    try {
+      await executeRule4ColdRevival(db);
+    } catch (err) {
+      console.error('[Rule 4 Execution Error]:', err);
+    }
+
+    // Process Rule 5 Order Reorder Reminders
+    try {
+      await executeRule5ReorderReminders(db);
+    } catch (err) {
+      console.error('[Rule 5 Execution Error]:', err);
+    }
+
+    // Process Rule 6 Festival Campaign Prep
+    try {
+      await executeRule6FestivalCampaignPrep(db);
+    } catch (err) {
+      console.error('[Rule 6 Execution Error]:', err);
     }
   }
 );
@@ -150,7 +198,7 @@ export const purgeExpiredTrashScheduled = onSchedule(
   async () => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const cutoffTimestamp = admin.firestore.Timestamp.fromDate(thirtyDaysAgo);
+    const cutoffTimestamp = Timestamp.fromDate(thirtyDaysAgo);
 
     console.log(`[Trash Purge Cron] Purging records soft-deleted before: ${thirtyDaysAgo.toISOString()}`);
 
@@ -216,7 +264,7 @@ async function sendMemberDigestEmail(email: string, tasks: admin.firestore.Docum
 
   // Increment counter
   await counterRef.set(
-    { count: admin.firestore.FieldValue.increment(1), updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+    { count: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() },
     { merge: true }
   );
 }
@@ -353,7 +401,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
       if (isTaskUntouched(pTask)) {
         await pDoc.ref.update({
           isDeleted: true,
-          deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          deletedAt: FieldValue.serverTimestamp(),
           deletedBy: 'automation (stage changed)',
           status: 'Missed',
           completionNote: `Auto-cancelled: Customer stage changed from ${previousStage} to ${newStage}`,
@@ -369,7 +417,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
           type: 'general',
           deepLink: `/tasks?id=${pDoc.id}`,
           isRead: false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         });
       }
     }
@@ -460,7 +508,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
         {
           globalCount: globalCount + 1,
           rule1Count: rule1Count + 1,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
@@ -490,7 +538,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
         type: 'general',
         deepLink: '/automations',
         isRead: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
       return;
     }
@@ -532,8 +580,8 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
         automationKey,
         automationStage: newStage,
         automationRunId: rollingRunRef.id,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
         lastEditedBy: null,
         lastEditedAt: null,
       });
@@ -547,8 +595,8 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
           startedAt: todayStr,
           finishedAt: new Date().toISOString(),
           status: 'completed',
-          createdCount: admin.firestore.FieldValue.increment(1),
-          createdTaskIds: admin.firestore.FieldValue.arrayUnion(automationKey),
+          createdCount: FieldValue.increment(1),
+          createdTaskIds: FieldValue.arrayUnion(automationKey),
           settingsSnapshot: ruleData,
           undone: false,
           triggeredBy: 'firestore_trigger',
@@ -565,7 +613,7 @@ export const onCustomerStageChangeRule1 = onDocumentUpdated(
       details: `Created task "${title}" for ${assignedTo} (Due ${dueDateStr})`,
       taskId: automationKey,
       customerId,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     console.log(`[Rule 1] Transactionally created task ${automationKey} for ${assignedTo}.`);
@@ -625,13 +673,13 @@ export async function processPendingAutomationQueue() {
           automationRuleId: item.ruleId,
           automationKey: item.id,
           automationStage: item.stage,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
           lastEditedBy: null,
           lastEditedAt: null,
         });
       }
-      transaction.update(doc.ref, { status: 'processed', processedAt: admin.firestore.FieldValue.serverTimestamp() });
+      transaction.update(doc.ref, { status: 'processed', processedAt: FieldValue.serverTimestamp() });
     });
   }
 }
@@ -776,7 +824,7 @@ export async function executeMorningPlanCheck() {
 
     // Mark deduplicated
     await dedupeRef.set({
-      deliveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      deliveredAt: FieldValue.serverTimestamp(),
       memberEmail: email,
       date: todayStr,
     });
@@ -789,7 +837,7 @@ export async function executeMorningPlanCheck() {
       type: 'morning_plan',
       deepLink: '/tasks',
       isRead: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     // Email Dispatch via Resend (with Cap Fallback to Push/In-App)

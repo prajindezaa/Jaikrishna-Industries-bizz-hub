@@ -32,6 +32,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { CommandPalette } from './CommandPalette';
 import { OfflineIndicator } from './OfflineIndicator';
 import { FirestoreRulesNotice } from './FirestoreRulesNotice';
+import { NotificationBell } from './layout/NotificationBell';
 
 interface AppShellProps {
   currentModule: ActiveModule;
@@ -280,6 +281,9 @@ export const AppShell: React.FC<AppShellProps> = ({
 
             {/* Zone 3: Quick Action CTAs & Language Switcher */}
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              {/* Notification Bell Dropdown */}
+              <NotificationBell onNavigate={onNavigate} />
+
               {/* Language Switcher */}
               <button
                 onClick={toggleLanguage}
