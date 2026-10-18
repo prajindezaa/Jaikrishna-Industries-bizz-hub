@@ -17,6 +17,7 @@ import {
 } from './middleware';
 
 dotenv.config();
+dotenv.config({ path: '.env.local' });
 
 const app = express();
 app.use(express.json());

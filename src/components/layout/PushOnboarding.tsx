@@ -112,11 +112,19 @@ export const PushOnboarding: React.FC = () => {
         }),
       });
 
-      const data = await response.json();
-      if (data.success) {
+      let data: any = null;
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        setTestStatus(`Server error (${response.status}): ${text.slice(0, 150)}`);
+        return;
+      }
+
+      if (data?.success) {
         setTestStatus(`Push delivered successfully! (${data.successfulCount}/${data.total} devices confirmed)`);
       } else {
-        setTestStatus(`Push delivery failed: ${data.message || 'No active device tokens found.'}`);
+        setTestStatus(`Push delivery failed: ${data?.message || data?.error || 'No active device tokens found.'}`);
       }
     } catch (err: any) {
       setTestStatus(`Error: ${err?.message || 'Network request failed'}`);

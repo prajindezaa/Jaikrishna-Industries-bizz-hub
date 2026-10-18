@@ -24,6 +24,13 @@ import { executeRule5ReorderReminders } from './rule_5_reorder';
 export { executeRule5ReorderReminders } from './rule_5_reorder';
 import { executeRule6FestivalCampaignPrep } from './rule_6_festival';
 export { executeRule6FestivalCampaignPrep } from './rule_6_festival';
+export {
+  routeNotificationIntent,
+  isWithinQuietHours,
+  getCurrentTimeIST,
+  EMAIL_ENABLED,
+} from './notification_router';
+export type { NotificationIntent } from './notification_router';
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {

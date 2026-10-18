@@ -7,9 +7,9 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import app from './api/app';
-
 dotenv.config();
+dotenv.config({ path: '.env.local' });
+import app from './api/app';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

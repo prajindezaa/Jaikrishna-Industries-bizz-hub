@@ -369,6 +369,31 @@ export interface Product {
   isActive: boolean;
 }
 
+export interface MemberNotificationPreferences {
+  channels: {
+    inApp: boolean;
+    push: boolean;
+    email: boolean; // Note: EMAIL_ENABLED=false keeps this inactive/hidden
+  };
+  types: {
+    perTask: boolean;
+    taskUncompleted: boolean;
+    taskNotCreated: boolean;
+    planningNotDone: boolean;
+    followUpDue: boolean;
+    missedTaskAlert: boolean;
+    festivalCampaign: boolean;
+    reorderReminder: boolean;
+  };
+  quietHours: {
+    enabled: boolean;
+    start: string; // "21:00"
+    end: string;   // "08:00"
+  };
+  snoozeUntil?: string | null; // ISO timestamp
+  dailyEmailCap: number; // default: 5
+}
+
 export interface AppNotification {
   id: string;
   recipientEmail: string;
@@ -377,6 +402,33 @@ export interface AppNotification {
   deepLink?: string;
   type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system';
   isRead: boolean;
+  createdAt: string;
+  priority?: 'low' | 'normal' | 'high' | 'critical';
+  dedupeKey?: string;
+}
+
+export interface NotificationIntent {
+  recipientEmail: string;
+  title: string;
+  body: string;
+  type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system';
+  priority?: 'low' | 'normal' | 'high' | 'critical';
+  deepLink?: string;
+  dedupeKey: string;
+  category?: string;
+  bypassQuietHours?: boolean; // Critical security/system alerts can bypass
+  data?: Record<string, string>;
+}
+
+export interface NotificationLogRecord {
+  id: string;
+  recipientEmail: string;
+  title: string;
+  type: string;
+  dedupeKey: string;
+  channelsDelivered: string[];
+  status: 'delivered' | 'suppressed' | 'failed';
+  suppressionReason?: 'quiet_hours' | 'user_disabled_type' | 'user_disabled_channel' | 'snoozed' | 'dedupe_duplicate' | 'cap_exceeded';
   createdAt: string;
 }
 

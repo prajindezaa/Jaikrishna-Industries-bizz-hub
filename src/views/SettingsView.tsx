@@ -29,6 +29,7 @@ import { requestNotificationPermission, showBrowserNotification } from '../lib/n
 import { z } from 'zod';
 import { WhatsAppHubSettings } from '../types';
 import { PushOnboarding } from '../components/layout/PushOnboarding';
+import { db } from '../lib/firebase';
 
 export const SettingsView: React.FC = () => {
   const { user, member } = useAuth();
@@ -51,16 +52,100 @@ export const SettingsView: React.FC = () => {
   // Notification Preferences State
   const [prefs, setPrefs] = useState({
     pushEnabled: true,
-    emailEnabled: true,
+    inAppEnabled: true,
     perTask: true,
     taskUncompleted: true,
     taskNotCreated: true,
     planningNotDone: true,
     missedTaskPeerAlert: true,
-    dailyEmailCap: 5,
+    festivalCampaign: true,
+    reorderReminder: true,
+    quietHoursEnabled: true,
     quietHoursStart: '21:00',
     quietHoursEnd: '08:00',
+    dailyEmailCap: 5,
   });
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefSaveSuccess, setPrefSaveSuccess] = useState(false);
+
+  // Load preferences from Firestore team_members collection
+  useEffect(() => {
+    if (!db || !user?.email) return;
+    const firestoreDb = db;
+    const fetchMemberPrefs = async () => {
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        const snap = await getDoc(doc(firestoreDb, 'team_members', user.email!.toLowerCase()));
+        if (snap.exists()) {
+          const np = snap.data()?.notificationPreferences;
+          if (np) {
+            setPrefs({
+              pushEnabled: np.channels?.push !== false,
+              inAppEnabled: np.channels?.inApp !== false,
+              perTask: np.types?.perTask !== false,
+              taskUncompleted: np.types?.taskUncompleted !== false,
+              taskNotCreated: np.types?.taskNotCreated !== false,
+              planningNotDone: np.types?.planningNotDone !== false,
+              missedTaskPeerAlert: np.types?.missedTaskAlert !== false,
+              festivalCampaign: np.types?.festivalCampaign !== false,
+              reorderReminder: np.types?.reorderReminder !== false,
+              quietHoursEnabled: np.quietHours?.enabled !== false,
+              quietHoursStart: np.quietHours?.start || '21:00',
+              quietHoursEnd: np.quietHours?.end || '08:00',
+              dailyEmailCap: np.dailyEmailCap || 5,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load member preferences:', err);
+      }
+    };
+    fetchMemberPrefs();
+  }, [user]);
+
+  const handleSavePreferences = async () => {
+    if (!db || !user?.email) return;
+    const firestoreDb = db;
+    setSavingPrefs(true);
+    setPrefSaveSuccess(false);
+    try {
+      const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+      await setDoc(
+        doc(firestoreDb, 'team_members', user.email.toLowerCase()),
+        {
+          notificationPreferences: {
+            channels: {
+              push: prefs.pushEnabled,
+              inApp: prefs.inAppEnabled,
+              email: false, // EMAIL_ENABLED=false
+            },
+            types: {
+              perTask: prefs.perTask,
+              taskUncompleted: prefs.taskUncompleted,
+              taskNotCreated: prefs.taskNotCreated,
+              planningNotDone: prefs.planningNotDone,
+              missedTaskAlert: prefs.missedTaskPeerAlert,
+              festivalCampaign: prefs.festivalCampaign,
+              reorderReminder: prefs.reorderReminder,
+            },
+            quietHours: {
+              enabled: prefs.quietHoursEnabled,
+              start: prefs.quietHoursStart,
+              end: prefs.quietHoursEnd,
+            },
+          },
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setPrefSaveSuccess(true);
+      setTimeout(() => setPrefSaveSuccess(false), 3000);
+    } catch (err) {
+      console.error('Failed to save preferences:', err);
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
 
   const fetchDiagnostics = async () => {
     setLoadingDiag(true);
@@ -242,6 +327,86 @@ export const SettingsView: React.FC = () => {
                   className="rounded border-stone-300 text-amber-800"
                 />
               </label>
+
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="font-semibold text-stone-900">Festival Campaign Alerts (Rule 6)</div>
+                  <div className="text-[11px] text-stone-500">Alerts 14 days before pooja festivals (Diwali, Pongal, etc.)</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={prefs.festivalCampaign}
+                  onChange={(e) => setPrefs({ ...prefs, festivalCampaign: e.target.checked })}
+                  className="rounded border-stone-300 text-amber-800"
+                />
+              </label>
+
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="font-semibold text-stone-900">Reorder Cycle Reminders (Rule 5)</div>
+                  <div className="text-[11px] text-stone-500">Alerts at 45 days after last camphor / oil bulk dispatch</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={prefs.reorderReminder}
+                  onChange={(e) => setPrefs({ ...prefs, reorderReminder: e.target.checked })}
+                  className="rounded border-stone-300 text-amber-800"
+                />
+              </label>
+
+              {/* Quiet Hours Configuration */}
+              <div className="pt-3 border-t border-stone-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-stone-900">Quiet Hours (Asia/Kolkata)</div>
+                    <div className="text-[11px] text-stone-500">Suppress non-critical push notifications during rest hours</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={prefs.quietHoursEnabled}
+                    onChange={(e) => setPrefs({ ...prefs, quietHoursEnabled: e.target.checked })}
+                    className="rounded border-stone-300 text-amber-800"
+                  />
+                </div>
+
+                {prefs.quietHoursEnabled && (
+                  <div className="flex items-center gap-2 pt-1 text-xs text-stone-700">
+                    <span>From</span>
+                    <input
+                      type="time"
+                      value={prefs.quietHoursStart}
+                      onChange={(e) => setPrefs({ ...prefs, quietHoursStart: e.target.value })}
+                      className="px-2 py-1 rounded border border-stone-300 bg-stone-50 font-mono text-xs"
+                    />
+                    <span>To</span>
+                    <input
+                      type="time"
+                      value={prefs.quietHoursEnd}
+                      onChange={(e) => setPrefs({ ...prefs, quietHoursEnd: e.target.value })}
+                      className="px-2 py-1 rounded border border-stone-300 bg-stone-50 font-mono text-xs"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Save Button */}
+              <div className="pt-3 border-t border-stone-100 flex items-center justify-between">
+                <button
+                  onClick={handleSavePreferences}
+                  disabled={savingPrefs}
+                  className="px-4 py-2 bg-[#881337] hover:bg-[#70102e] text-white text-xs font-semibold rounded-xl shadow-xs transition flex items-center gap-1.5"
+                >
+                  {savingPrefs ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save Notification Preferences
+                </button>
+
+                {prefSaveSuccess && (
+                  <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Preferences Saved
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
