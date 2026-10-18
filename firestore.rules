@@ -36,14 +36,34 @@ service cloud.firestore {
       allow write: if isAllowedMember();
     }
 
-    // Customers CRM module
+    // Customers CRM module: enforce lastWriteSource and updatedBy on writes from client
     match /customers/{customerId} {
-      allow read, write: if isAllowedMember();
+      allow read: if isAllowedMember();
+      allow create: if isAllowedMember() && 
+        ('updatedBy' in request.resource.data) &&
+        ('lastWriteSource' in request.resource.data) &&
+        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change']);
+      allow update: if isAllowedMember() && 
+        ('updatedBy' in request.resource.data) &&
+        ('lastWriteSource' in request.resource.data) &&
+        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change']);
+      allow delete: if isAllowedMember();
     }
 
-    // Tasks & Follow-ups module
+    // Tasks & Follow-ups module: allowlisted members can manage tasks,
+    // but clients CANNOT forge automation markers (automationKey, automationRuleId, automationRunId, isAutomation, createdBy: 'automation').
     match /tasks/{taskId} {
-      allow read, write: if isAllowedMember();
+      allow read: if isAllowedMember();
+      allow create: if isAllowedMember() &&
+        (!('isAutomation' in request.resource.data) || request.resource.data.isAutomation == false) &&
+        (!('automationKey' in request.resource.data) || request.resource.data.automationKey == null) &&
+        (!('createdBy' in request.resource.data) || request.resource.data.createdBy != 'automation');
+      allow update: if isAllowedMember() &&
+        // Protect automation fields from client mutation
+        (!('automationKey' in request.resource.data) || request.resource.data.automationKey == resource.data.automationKey) &&
+        (!('isAutomation' in request.resource.data) || request.resource.data.isAutomation == resource.data.isAutomation) &&
+        (!('automationRuleId' in request.resource.data) || request.resource.data.automationRuleId == resource.data.automationRuleId);
+      allow delete: if isAllowedMember();
     }
 
     // Planning Hub (daily/weekly/monthly goals)
@@ -71,10 +91,11 @@ service cloud.firestore {
       allow read, write: if isAllowedMember();
     }
 
-    // Activity Logs audit trail
+    // Activity Logs audit trail (byAutomation logs can only be authored by Admin SDK)
     match /activity_logs/{logId} {
       allow read: if isAllowedMember();
-      allow create: if isAllowedMember();
+      allow create: if isAllowedMember() &&
+        (!('byAutomation' in request.resource.data) || request.resource.data.byAutomation == false);
       allow update, delete: if false; // immutable audit log
     }
 
@@ -104,6 +125,22 @@ service cloud.firestore {
     }
     match /whatsapp_queue_items/{itemId} {
       allow read, write: if isAllowedMember();
+    }
+
+    // Automation Hub (Rules, Parameters, Run History, Pending Overflow Queue)
+    // 1. Rules: Allowlisted members can read and edit rule settings
+    match /automation_rules/{ruleId} {
+      allow read: if isAllowedMember();
+      allow write: if isAllowedMember();
+    }
+    // 2. Runs & Pending items: Server-only writes. Members have read-only access.
+    match /automation_runs/{runId} {
+      allow read: if isAllowedMember();
+      allow write: if false; // Cloud Functions & Admin SDK only
+    }
+    match /automation_pending/{pendingId} {
+      allow read: if isAllowedMember();
+      allow write: if false; // Cloud Functions & Admin SDK only
     }
   }
 }

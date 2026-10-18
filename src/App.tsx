@@ -18,6 +18,7 @@ import { OrdersView } from './views/OrdersView';
 import { TrashView } from './views/TrashView';
 import { SettingsView } from './views/SettingsView';
 import { AssistantView } from './views/AssistantView';
+import { AutomationRulesView } from './views/AutomationRulesView';
 
 const MainAppContent: React.FC = () => {
   const { isConfigured, user, loading } = useAuth();
@@ -55,6 +56,7 @@ const MainAppContent: React.FC = () => {
       {currentModule === 'tasks' && <TasksView />}
       {currentModule === 'planning' && <PlanningView />}
       {currentModule === 'orders' && <OrdersView />}
+      {currentModule === 'automations' && <AutomationRulesView />}
       {currentModule === 'trash' && <TrashView />}
       {currentModule === 'settings' && <SettingsView />}
       {currentModule === 'assistant' && <AssistantView />}

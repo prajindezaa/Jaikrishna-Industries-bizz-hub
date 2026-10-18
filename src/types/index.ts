@@ -113,6 +113,10 @@ export interface Customer {
   totalOrdersCount: number;
   totalRevenue: number;
   statusHistory: StatusHistoryEntry[];
+  stageHistory?: { from: LeadStage; to: LeadStage; changedBy: string; changedAt: string }[];
+  lastWriteSource?: 'manual_edit' | 'manual_create' | 'bulk_import' | 'bulk_stage_change' | 'automation' | 'system';
+  importBatchId?: string | null;
+  updatedBy?: string;
   isDeleted: boolean;
   deletedAt?: string | null;
   deletedBy?: string | null;
@@ -145,6 +149,16 @@ export interface Task {
   completedBy?: string | null;
   isDeleted: boolean;
   deletedAt?: string | null;
+  // Manual Edit Audit Fields (Untouched check: only changed by human member edits)
+  lastEditedBy?: string | null;
+  lastEditedAt?: string | null;
+  // Automation Hub Metadata
+  createdBy?: string;
+  isAutomation?: boolean;
+  automationRuleId?: string;
+  automationKey?: string;
+  automationRunId?: string;
+  automationStage?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -435,6 +449,100 @@ export type ActiveModule =
   | 'orders'
   | 'trash'
   | 'settings'
-  | 'assistant';
+  | 'assistant'
+  | 'automations';
 
 export type LanguageCode = 'en' | 'ta';
+
+// -------------------------------------------------------------
+// Automation Hub Data Types (Step A: Rules 1 & 7)
+// -------------------------------------------------------------
+export type AutomationRuleId =
+  | 'rule_1_auto_followup'
+  | 'rule_3_auto_stage_cold'
+  | 'rule_4_cold_revival'
+  | 'rule_5_reorder_reminders'
+  | 'rule_7_morning_plan';
+
+export interface StageRuleConfig {
+  enabled: boolean;
+  titleTemplate: string;
+  taskType: TaskType;
+  daysAfter: number;
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  priority: TaskPriority;
+}
+
+export interface Rule1Parameters {
+  skipOnImport: boolean;
+  stages: {
+    'Sample sent'?: StageRuleConfig;
+    'Interested'?: StageRuleConfig;
+    'Negotiation'?: StageRuleConfig;
+    'Contacted'?: StageRuleConfig;
+    'New'?: StageRuleConfig;
+    'Ordered'?: StageRuleConfig;
+    'Not interested'?: StageRuleConfig;
+  };
+}
+
+export interface Rule7MemberConfig {
+  enabled: boolean;
+  deliveryTime: string; // HH:mm IST
+  channels: {
+    push: boolean;
+    inApp: boolean;
+    email: boolean;
+  };
+  sendIfEmpty: boolean;
+}
+
+export interface Rule7Parameters {
+  lookaheadFestivalDays: number;
+  allowEmptyNotification: boolean;
+  memberSettings: Record<string, Rule7MemberConfig>;
+}
+
+export interface AutomationRuleDoc {
+  id: AutomationRuleId;
+  name: string;
+  description: string;
+  enabled: boolean;
+  previewSeenAt?: string | null;
+  dailyCap: number;
+  workingDays: number[]; // [1,2,3,4,5,6] (Mon-Sat, 0=Sun)
+  fallbackAssignee: 'actor' | 'round_robin';
+  parameters: Record<string, any>;
+  lastRunAt?: string | null;
+  lastResult?: {
+    status: 'success' | 'skipped' | 'partial' | 'error';
+    createdCount: number;
+    skippedCount: number;
+    skipReasons: Record<string, number>;
+    error?: string | null;
+    timestamp: string;
+  } | null;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface AutomationRunDoc {
+  id: string;
+  ruleId: AutomationRuleId;
+  ruleName: string;
+  startedAt: string;
+  finishedAt: string;
+  status: 'completed' | 'failed' | 'undone';
+  createdCount: number;
+  skippedCount: number;
+  skipReasons: Record<string, number>;
+  createdTaskIds: string[];
+  appliedTags?: { customerId: string; tag: string }[];
+  settingsSnapshot: Record<string, any>;
+  errors?: string[];
+  undone: boolean;
+  undoneAt?: string | null;
+  undoneBy?: string | null;
+  triggeredBy: 'firestore_trigger' | 'schedule' | 'manual_test';
+}

@@ -6,6 +6,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import * as admin from 'firebase-admin';
 import {
   requireAuth,
   createRateLimiter,
@@ -174,6 +175,211 @@ app.post('/api/cloudinary-sign', standardRateLimiter, requireAuth, (req: Authent
   });
 });
 
+// 7. Automation Hub: Undo an Automation Run
+app.post('/api/automations/undo', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { runId } = req.body;
+  if (!runId || typeof runId !== 'string') {
+    res.status(400).json({ error: 'runId is required' });
+    return;
+  }
+
+  const memberEmail = req.memberEmail || req.user?.email || 'admin';
+
+  try {
+    const adminSdk = getFirebaseAdmin();
+    const runRef = adminSdk.firestore().collection('automation_runs').doc(runId);
+    const runDoc = await runRef.get();
+
+    if (!runDoc.exists) {
+      res.status(404).json({ error: 'Automation run not found.' });
+      return;
+    }
+
+    const runData = runDoc.data()!;
+    if (runData.undone) {
+      res.status(400).json({ error: 'This automation run has already been undone.' });
+      return;
+    }
+
+    const createdTaskIds: string[] = runData.createdTaskIds || [];
+    let undoneCount = 0;
+    let skippedCount = 0;
+
+    const batch = adminSdk.firestore().batch();
+
+    for (const taskId of createdTaskIds) {
+      const taskRef = adminSdk.firestore().collection('tasks').doc(taskId);
+      const taskDoc = await taskRef.get();
+
+      if (taskDoc.exists) {
+        const taskData = taskDoc.data()!;
+        // Soft-delete ONLY untouched tasks (lastEditedBy == null, lastEditedAt == null, Pending)
+        const isUntouched = taskData.status === 'Pending' && !taskData.completedAt && !taskData.lastEditedBy && !taskData.lastEditedAt && !taskData.isDeleted;
+        if (isUntouched) {
+          batch.update(taskRef, {
+            isDeleted: true,
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deletedBy: `automation_undo by ${memberEmail}`,
+            status: 'Missed',
+            completionNote: `Rolled back via Automation Hub Undo by ${memberEmail}`,
+          });
+          undoneCount++;
+        } else {
+          skippedCount++; // Touched, completed, or already deleted
+        }
+      }
+    }
+
+    // Mark run as undone
+    batch.update(runRef, {
+      undone: true,
+      undoneAt: new Date().toISOString(),
+      undoneBy: memberEmail,
+      status: 'undone',
+    });
+
+    // Write undo event to activity_logs
+    const logRef = adminSdk.firestore().collection('activity_logs').doc();
+    batch.set(logRef, {
+      action: 'automation_run_undone',
+      byAutomation: true,
+      automationRuleId: runData.ruleId,
+      runId,
+      details: `Run for ${runData.ruleName} was undone by ${memberEmail}. ${undoneCount} pending task(s) moved to trash (${skippedCount} touched tasks preserved).`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+
+    res.json({
+      success: true,
+      undoneCount,
+      skippedCount,
+      message: `Successfully rolled back ${undoneCount} pending tasks.`,
+    });
+  } catch (err: unknown) {
+    console.error('Error undoing automation run:', err);
+    res.status(500).json({ error: 'Failed to undo automation run.', message: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// 8. Automation Hub: Undo a Single Automation Task
+app.post('/api/automations/undo-task', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { taskId } = req.body;
+  if (!taskId || typeof taskId !== 'string') {
+    res.status(400).json({ error: 'taskId is required' });
+    return;
+  }
+
+  const memberEmail = req.memberEmail || req.user?.email || 'admin';
+
+  try {
+    const adminSdk = getFirebaseAdmin();
+    const taskRef = adminSdk.firestore().collection('tasks').doc(taskId);
+    const taskDoc = await taskRef.get();
+
+    if (!taskDoc.exists) {
+      res.status(404).json({ error: 'Task not found.' });
+      return;
+    }
+
+    const task = taskDoc.data()!;
+    if (!task.isAutomation) {
+      res.status(400).json({ error: 'This task was not created by an automation.' });
+      return;
+    }
+
+    // Check untouched invariant
+    const isUntouched = task.status === 'Pending' && !task.completedAt && !task.lastEditedBy && !task.lastEditedAt && !task.isDeleted;
+    if (!isUntouched) {
+      res.status(400).json({
+        error: 'Task has already been edited, started, or completed by a team member and cannot be undone automatically.',
+      });
+      return;
+    }
+
+    // Soft delete to Trash
+    await taskRef.update({
+      isDeleted: true,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+      deletedBy: `single_task_undo by ${memberEmail}`,
+      status: 'Missed',
+      completionNote: `Rolled back via Automation Hub single-task undo by ${memberEmail}`,
+    });
+
+    // Log the undo
+    await adminSdk.firestore().collection('activity_logs').add({
+      action: 'automation_task_undone',
+      byAutomation: true,
+      automationRuleId: task.automationRuleId,
+      taskId,
+      details: `Single automation task "${task.title}" was undone by ${memberEmail} and moved to trash.`,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    res.json({
+      success: true,
+      message: `Task "${task.title}" was successfully rolled back and moved to trash.`,
+    });
+  } catch (err: unknown) {
+    console.error('Error undoing single automation task:', err);
+    res.status(500).json({ error: 'Failed to undo task.' });
+  }
+});
+
+// 9. Automation Hub: Send Sample Morning Plan Immediately
+app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const targetEmail = req.memberEmail || req.user?.email;
+  if (!targetEmail) {
+    res.status(401).json({ error: 'Authenticated user email required' });
+    return;
+  }
+
+  try {
+    const adminSdk = getFirebaseAdmin();
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
+    // Pull tasks and stats
+    const tasksSnap = await adminSdk.firestore()
+      .collection('tasks')
+      .where('assignedTo', '==', targetEmail)
+      .where('date', '==', todayStr)
+      .where('isDeleted', '==', false)
+      .limit(10)
+      .get();
+
+    const overdueSnap = await adminSdk.firestore()
+      .collection('tasks')
+      .where('assignedTo', '==', targetEmail)
+      .where('date', '<', todayStr)
+      .where('status', 'in', ['Pending', 'In progress'])
+      .where('isDeleted', '==', false)
+      .limit(10)
+      .get();
+
+    // Create an in-app notification
+    await adminSdk.firestore().collection('notifications').add({
+      recipientEmail: targetEmail,
+      title: `[Sample] Daily Operations Plan — ${todayStr}`,
+      body: `You have ${tasksSnap.size} task(s) today and ${overdueSnap.size} overdue tasks in your queue.`,
+      type: 'morning_plan',
+      deepLink: '/tasks',
+      isRead: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    res.json({
+      success: true,
+      message: `Sample morning plan generated and delivered as in-app notification to ${targetEmail}.`,
+      tasksTodayCount: tasksSnap.size,
+      overdueTasksCount: overdueSnap.size,
+    });
+  } catch (err: unknown) {
+    console.error('Error dispatching sample morning plan:', err);
+    res.status(500).json({ error: 'Failed to dispatch sample morning plan.' });
+  }
+});
+
 // 7. Offline Rule-Based Assistant Generator (Clearly marked as non-AI)
 function getSmartAssistantFallback(message: string, context: any): string {
   const q = message.toLowerCase();
@@ -268,10 +474,14 @@ function getSmartAssistantFallback(message: string, context: any): string {
     return `Vanakkam! Your background notification settings:\n- Timezone: ${notificationSettings.timezone}\n- Daily Email Cap: ${notificationSettings.dailyEmailCap}\n- Global Cap: ${notificationSettings.globalCap}\n- Quiet Hours: ${notificationSettings.quietHours}\n- Nudges: ${notificationSettings.nudgesConfigured}`;
   }
 
+  if (q.includes('automation') || q.includes('rule') || q.includes('morning plan') || q.includes('auto follow-up')) {
+    return `Vanakkam! Jaikrishna Industries Automation Hub status:\n- Rule 1 (Auto Follow-up Tasks on Stage Change): Automated task generation upon CRM lead stage transition.\n- Rule 7 (Daily Morning Plan): Operations briefing dispatched in Asia/Kolkata timezone.\n\n*Security Note: As a dedicated Read-Only Assistant, I cannot trigger, toggle, or alter automation rules. Please open the "Automation Rules" view from Settings to configure rules or review run history.*`;
+  }
+
   return `Vanakkam! I have received your inquiry regarding "${message}". Based on your live Jaikrishna Industries database: you have ${summary.totalCustomers} customers, ${metaAds.length} Meta ad campaigns, ${summary.totalOrders} orders, and ${summary.totalTasks} scheduled tasks. How else can I assist your operations today?`;
 }
 
-// 8. Read-Only Gemini AI Assistant Endpoint (Strict Auth + Rate Limiter Required)
+// 10. Read-Only Gemini AI Assistant Endpoint (Strict Auth + Rate Limiter Required)
 app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { message, context } = req.body;
   if (!message || typeof message !== 'string') {
@@ -303,7 +513,7 @@ app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: Authen
     const systemPrompt = `You are the dedicated Read-Only Business Operations Assistant for Jaikrishna Industries, a premier pooja products manufacturer based in Salem, Tamil Nadu (manufacturing pure Bhimseni camphor, camphor tablets, premium agarbatti, Deepam lamp oil, pure sambrani cups, and traditional rose water).
     
 CRITICAL OPERATIONAL INVARIANTS:
-1. STRICT READ-ONLY GUARANTEE: You have read-only visibility into the company's leads, tasks, orders, and team members. Under NO circumstances do you execute create, update, or delete operations. If asked to modify, delete, or create records, guide the user to the appropriate screen in the Jaikrishna Hub.
+1. STRICT READ-ONLY GUARANTEE: You have read-only visibility into the company's leads, tasks, orders, team members, and automations. Under NO circumstances do you execute create, update, or delete operations. You cannot enable, run, edit, or undo automations. If asked to modify, delete, or create records or automations, guide the user to the appropriate screen in the Jaikrishna Hub.
 2. ACCURACY: Base your answers on the provided real-time workspace context.
 3. TONE: Courteous, executive, and encouraging (use 'Vanakkam' where appropriate). You can converse in English or Tamil.
 

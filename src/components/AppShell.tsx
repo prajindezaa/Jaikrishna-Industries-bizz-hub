@@ -23,6 +23,7 @@ import {
   ChevronRight,
   User as UserIcon,
   ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import { ActiveModule } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -93,6 +94,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'tasks' as ActiveModule, label: t('navTasks', 'Tasks'), icon: CheckSquare },
     { id: 'planning' as ActiveModule, label: t('navPlanning', 'Planning Hub'), icon: Calendar },
     { id: 'orders' as ActiveModule, label: t('navOrders', 'Orders'), icon: ShoppingBag },
+    { id: 'automations' as ActiveModule, label: t('navAutomations', 'Automation Rules'), icon: Zap },
     { id: 'trash' as ActiveModule, label: t('navTrash', 'Trash (30d)'), icon: Trash2 },
     { id: 'settings' as ActiveModule, label: t('navSettings', 'Settings'), icon: Settings },
   ];

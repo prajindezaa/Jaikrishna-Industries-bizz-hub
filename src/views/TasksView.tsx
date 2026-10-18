@@ -25,6 +25,8 @@ import {
   Repeat,
   Loader2,
   Sparkles,
+  Zap,
+  RotateCcw,
 } from 'lucide-react';
 import { Task, TaskType, TaskPriority, TaskStatus, TaskRepeat } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -447,6 +449,15 @@ export const TasksView: React.FC = () => {
                       <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-stone-100 text-stone-600">
                         {t.type}
                       </span>
+                      {t.isAutomation && (
+                        <span
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 flex items-center gap-1 border border-amber-300 shadow-2xs"
+                          title={`Created by automation (${t.automationRuleId || 'Rule 1'})`}
+                        >
+                          <Zap className="w-3 h-3 text-amber-600" />
+                          <span>Automation</span>
+                        </span>
+                      )}
                       {t.repeat !== 'None' && (
                         <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 flex items-center gap-1 border border-purple-200">
                           <Repeat className="w-3 h-3" />
@@ -515,6 +526,31 @@ export const TasksView: React.FC = () => {
                     >
                       <Check className="w-3.5 h-3.5" />
                       Done
+                    </button>
+                  )}
+
+                  {t.isAutomation && t.status === 'Pending' && !t.lastEditedBy && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Undo automated task "${t.title}" and move it to trash?`)) return;
+                        try {
+                          const res = await fetch('/api/automations/undo-task', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ taskId: t.id }),
+                          });
+                          if (!res.ok) throw new Error('Undo failed');
+                          softDeleteTask(t.id);
+                          showToast('Automation task undone and moved to trash.');
+                        } catch (err) {
+                          softDeleteTask(t.id);
+                          showToast('Task moved to trash.');
+                        }
+                      }}
+                      className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors border border-amber-200"
+                      title="Undo this automation task (revert to trash)"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
                     </button>
                   )}
 
