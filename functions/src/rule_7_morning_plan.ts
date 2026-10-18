@@ -14,6 +14,7 @@ import { routeNotificationIntent } from './notification_router';
 
 export interface Rule7CheckOptions {
   simulatedTime?: Date; // Used for automated testing and simulation
+  forceRunNow?: boolean;
 }
 
 /**
@@ -56,14 +57,39 @@ export async function executeRule7MorningPlan(
     skipped: [] as { email: string; reason: string }[],
   };
 
-  // 1. Fetch Rule 7 settings
+  // 1. Fetch or auto-initialize Rule 7 settings
   const ruleRef = db.collection('automation_rules').doc('rule_7_morning_plan');
-  const ruleDoc = await ruleRef.get();
-  if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
+  let ruleDoc = await ruleRef.get();
+
+  if (!ruleDoc.exists) {
+    const defaultRule7 = {
+      id: 'rule_7_morning_plan',
+      name: 'Rule 7: Daily Morning Operations Plan',
+      description: 'Prepares an automated morning operations digest delivered to each member outside quiet hours.',
+      enabled: true,
+      dailyCap: 10,
+      workingDays: [1, 2, 3, 4, 5, 6],
+      fallbackAssignee: 'actor',
+      parameters: {
+        maxLatenessMinutes: 120,
+        lookaheadFestivalDays: 7,
+        allowEmptyNotification: false,
+        memberSettings: {
+          'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+        },
+      },
+      updatedBy: 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await ruleRef.set(defaultRule7);
+    ruleDoc = await ruleRef.get();
+  }
+
+  const ruleData = ruleDoc.data() || {};
+  if (!ruleData.enabled && !options?.forceRunNow) {
     return result;
   }
 
-  const ruleData = ruleDoc.data()!;
   const params = ruleData.parameters || {};
   const memberConfigs = params.memberSettings || {};
   const maxLatenessMinutes = params.maxLatenessMinutes ?? 120; // 2 hours default
@@ -76,7 +102,7 @@ export async function executeRule7MorningPlan(
   for (const email of members) {
     const memberCfg = memberConfigs[email] || {
       enabled: true,
-      deliveryTime: '08:30',
+      deliveryTime: '08:00',
       channels: { push: true, inApp: true, email: true },
       sendIfEmpty: false,
     };
@@ -86,40 +112,46 @@ export async function executeRule7MorningPlan(
       continue;
     }
 
-    const chosenTime = memberCfg.deliveryTime || '08:30';
+    const chosenTime = memberCfg.deliveryTime || '08:00';
     const [cHours, cMins] = chosenTime.split(':').map(Number);
     const chosenTotalMins = cHours * 60 + cMins;
 
-    // Delivery Condition: serverTime >= chosenTime AND within lateness window
-    if (currentTotalMins < chosenTotalMins) {
-      result.skipped.push({ email, reason: `too_early (current ${kolkataHours}:${kolkataMinutes} < ${chosenTime})` });
-      continue;
-    }
+    // Delivery Condition: serverTime >= chosenTime AND within lateness window (unless forceRunNow)
+    if (!options?.forceRunNow) {
+      if (currentTotalMins < chosenTotalMins) {
+        result.skipped.push({ email, reason: `too_early (current ${kolkataHours}:${kolkataMinutes} < ${chosenTime})` });
+        continue;
+      }
 
-    if (currentTotalMins > chosenTotalMins + maxLatenessMinutes) {
-      result.skipped.push({ email, reason: `expired_lateness_window (${currentTotalMins - chosenTotalMins}m > ${maxLatenessMinutes}m)` });
-      continue;
-    }
-
-    // Quiet Hours Validation: check member profile or default 21:00 - 08:00
-    const memberProfile = await db.collection('team_members').doc(email.replace(/[@.]/g, '_')).get();
-    const quietHours = memberProfile.data()?.notificationPreferences?.quietHours;
-    if (quietHours?.enabled) {
-      const [qStartH] = (quietHours.start || '21:00').split(':').map(Number);
-      const [qEndH] = (quietHours.end || '08:00').split(':').map(Number);
-      if (kolkataHours >= qStartH || kolkataHours < qEndH) {
-        result.skipped.push({ email, reason: 'inside_quiet_hours' });
+      if (currentTotalMins > chosenTotalMins + maxLatenessMinutes) {
+        result.skipped.push({ email, reason: `expired_lateness_window (${currentTotalMins - chosenTotalMins}m > ${maxLatenessMinutes}m)` });
         continue;
       }
     }
 
-    // Deduplication check: Send once per member per date
+    // Quiet Hours Validation: check member profile or default 21:00 - 08:00
+    if (!options?.forceRunNow) {
+      const memberProfile = await db.collection('team_members').doc(email.replace(/[@.]/g, '_')).get();
+      const quietHours = memberProfile.data()?.notificationPreferences?.quietHours;
+      if (quietHours?.enabled) {
+        const [qStartH] = (quietHours.start || '21:00').split(':').map(Number);
+        const [qEndH] = (quietHours.end || '08:00').split(':').map(Number);
+        if (kolkataHours >= qStartH || kolkataHours < qEndH) {
+          result.skipped.push({ email, reason: 'inside_quiet_hours' });
+          continue;
+        }
+      }
+    }
+
+    // Deduplication check: Send once per member per date (unless forceRunNow)
     const dedupeKey = `morning_plan_${email}_${todayStr}`;
     const dedupeRef = db.collection('notification_log').doc(dedupeKey);
-    const dedupeDoc = await dedupeRef.get();
-    if (dedupeDoc.exists) {
-      result.skipped.push({ email, reason: 'already_sent_today' });
-      continue;
+    if (!options?.forceRunNow) {
+      const dedupeDoc = await dedupeRef.get();
+      if (dedupeDoc.exists) {
+        result.skipped.push({ email, reason: 'already_sent_today' });
+        continue;
+      }
     }
 
     // Fetch Plan Content
@@ -132,15 +164,19 @@ export async function executeRule7MorningPlan(
       .limit(10)
       .get();
 
-    // 2. Overdue tasks for member
-    const overdueTasksSnap = await db
+    // 2. Overdue tasks for member (in-memory filter for status to avoid missing composite index)
+    const allMemberTasksSnap = await db
       .collection('tasks')
       .where('assignedTo', '==', email)
-      .where('date', '<', todayStr)
-      .where('status', 'in', ['Pending', 'In progress'])
       .where('isDeleted', '==', false)
-      .limit(10)
+      .limit(50)
       .get();
+
+    const overdueTasks = allMemberTasksSnap.docs.filter((d) => {
+      const data = d.data();
+      const isOpen = data.status === 'Pending' || data.status === 'In progress';
+      return isOpen && data.date && data.date < todayStr;
+    });
 
     // 3. New leads created since yesterday
     const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -152,14 +188,10 @@ export async function executeRule7MorningPlan(
       .get();
 
     // 4. Pending automation tasks across system
-    const pendingAutoSnap = await db
-      .collection('tasks')
-      .where('isAutomation', '==', true)
-      .where('assignedTo', '==', email)
-      .where('status', '==', 'Pending')
-      .where('isDeleted', '==', false)
-      .limit(5)
-      .get();
+    const pendingAutoTasks = allMemberTasksSnap.docs.filter((d) => {
+      const data = d.data();
+      return data.isAutomation === true && data.status === 'Pending';
+    });
 
     // 5. Meta ads waiting for result
     const adsWaitingSnap = await db
@@ -171,13 +203,13 @@ export async function executeRule7MorningPlan(
 
     const totalCount =
       tasksTodaySnap.size +
-      overdueTasksSnap.size +
+      overdueTasks.length +
       newLeadsSnap.size +
-      pendingAutoSnap.size +
+      pendingAutoTasks.length +
       adsWaitingSnap.size;
 
     // Empty day handling: skip if empty and sendIfEmpty is false
-    if (totalCount === 0 && !memberCfg.sendIfEmpty) {
+    if (totalCount === 0 && !memberCfg.sendIfEmpty && !options?.forceRunNow) {
       result.skipped.push({ email, reason: 'empty_day_and_sendIfEmpty_false' });
       continue;
     }
@@ -196,13 +228,13 @@ export async function executeRule7MorningPlan(
       recipientEmail: email,
       title: `Good Morning! Daily Plan — ${todayStr}`,
       body: totalCount > 0 
-        ? `${tasksTodaySnap.size} task(s) today, ${overdueTasksSnap.size} overdue, ${newLeadsSnap.size} new lead(s).` 
+        ? `${tasksTodaySnap.size} task(s) today, ${overdueTasks.length} overdue, ${newLeadsSnap.size} new lead(s).` 
         : 'Your schedule is clear for today.',
       type: 'morning_plan',
       priority: 'normal',
       deepLink: '/tasks',
       dedupeKey: `morning_plan_${email}_${todayStr}`,
-      bypassQuietHours: false,
+      bypassQuietHours: Boolean(options?.forceRunNow),
     });
 
     // Email delivery (Respects global daily cap, falls back to Push & In-App on cap hit)
@@ -214,28 +246,42 @@ export async function executeRule7MorningPlan(
       if (currentCount >= 80) {
         console.warn(`[Rule 7] Daily email cap reached (${currentCount}/80). Suppressing email for ${email}; delivered via In-App & Push.`);
       } else {
-        const formatItemList = (docs: admin.firestore.QueryDocumentSnapshot[], type: string) => {
+        const formatItemList = (items: { id: string; title: string; link: string }[]) => {
           const cap = 5;
-          const items = docs.slice(0, cap).map((d) => {
-            const data = d.data();
-            const link = type === 'lead' 
-              ? `https://jaikrishna-industries-bizz-hub.vercel.app/customers?id=${d.id}`
-              : `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`;
-            return `<li><a href="${link}">${data.title || data.companyName || d.id}</a></li>`;
+          const displayItems = items.slice(0, cap).map((item) => {
+            return `<li><a href="${item.link}">${item.title}</a></li>`;
           });
-          if (docs.length > cap) {
-            items.push(`<li><em>...and ${docs.length - cap} more</em></li>`);
+          if (items.length > cap) {
+            displayItems.push(`<li><em>...and ${items.length - cap} more</em></li>`);
           }
-          return items.join('');
+          return displayItems.join('');
         };
+
+        const todayTaskItems = tasksTodaySnap.docs.map((d) => ({
+          id: d.id,
+          title: d.data().title || d.id,
+          link: `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`,
+        }));
+
+        const overdueTaskItems = overdueTasks.map((d) => ({
+          id: d.id,
+          title: d.data().title || d.id,
+          link: `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`,
+        }));
+
+        const newLeadItems = newLeadsSnap.docs.map((d) => ({
+          id: d.id,
+          title: d.data().companyName || d.data().contactPerson || d.id,
+          link: `https://jaikrishna-industries-bizz-hub.vercel.app/customers?id=${d.id}`,
+        }));
 
         const emailHtml = `
           <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
             <h2 style="color: #881337;">Vanakkam! Morning Plan — ${todayStr}</h2>
             <p>Here is your daily operational summary:</p>
-            ${tasksTodaySnap.size > 0 ? `<h3>Today's Tasks (${tasksTodaySnap.size})</h3><ul>${formatItemList(tasksTodaySnap.docs, 'task')}</ul>` : '<p>No tasks scheduled today.</p>'}
-            ${overdueTasksSnap.size > 0 ? `<h3 style="color: #b91c1c;">⚠️ Overdue Tasks (${overdueTasksSnap.size})</h3><ul>${formatItemList(overdueTasksSnap.docs, 'task')}</ul>` : ''}
-            ${newLeadsSnap.size > 0 ? `<h3>New Leads (${newLeadsSnap.size})</h3><ul>${formatItemList(newLeadsSnap.docs, 'lead')}</ul>` : ''}
+            ${todayTaskItems.length > 0 ? `<h3>Today's Tasks (${todayTaskItems.length})</h3><ul>${formatItemList(todayTaskItems)}</ul>` : '<p>No tasks scheduled today.</p>'}
+            ${overdueTaskItems.length > 0 ? `<h3 style="color: #b91c1c;">⚠️ Overdue Tasks (${overdueTaskItems.length})</h3><ul>${formatItemList(overdueTaskItems)}</ul>` : ''}
+            ${newLeadItems.length > 0 ? `<h3>New Leads (${newLeadItems.length})</h3><ul>${formatItemList(newLeadItems)}</ul>` : ''}
             <p style="margin-top: 20px;">
               <a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks" style="background: #881337; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Open Tasks</a>
             </p>
@@ -255,7 +301,7 @@ export async function executeRule7MorningPlan(
   }
 
   // Update rule document lastResult for Health Panel visibility
-  await ruleRef.update({
+  await ruleRef.set({
     lastRunAt: new Date().toISOString(),
     lastResult: {
       status: 'success',
@@ -268,7 +314,7 @@ export async function executeRule7MorningPlan(
       error: null,
       timestamp: new Date().toISOString(),
     },
-  });
+  }, { merge: true });
 
   return result;
 }

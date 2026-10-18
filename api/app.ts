@@ -661,9 +661,9 @@ app.post('/api/automations/run-now', standardRateLimiter, requireAuth, async (re
     const adminSdk = getFirebaseAdmin();
     const db = adminSdk.firestore();
 
-    // Verify rule exists and is enabled before delegating
+    // Verify rule exists and is enabled before executing real run (dryRun preview is allowed anytime)
     const ruleDoc = await db.collection('automation_rules').doc(ruleId).get();
-    if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
+    if (!dryRun && (!ruleDoc.exists || !ruleDoc.data()?.enabled)) {
       res.status(400).json({ error: `Rule "${ruleId}" is currently disabled. Please enable it first.` });
       return;
     }
@@ -740,6 +740,25 @@ app.post('/api/automations/run-now', standardRateLimiter, requireAuth, async (re
         message: dryRun
           ? `[Preview] Evaluated ${stats.evaluated} lead(s): would create ${stats.created} re-engagement call task(s) (Skipped ${stats.skipped} active or already scheduled).`
           : `Created ${stats.created} idle lead re-engagement task(s) from ${stats.evaluated} evaluated leads (Skipped ${stats.skipped}).`,
+      };
+
+    } else if (ruleId === 'rule_6_festival_campaign_prep') {
+      // Delegate to shared Rule 6 implementation
+      const { executeRule6FestivalCampaignPrep } = await import('../functions/src/rule_6_festival.js');
+      const stats = await executeRule6FestivalCampaignPrep(db, {
+        forceRunNow: true,
+        dryRun: Boolean(dryRun),
+      });
+      result = {
+        success: true,
+        dryRun: Boolean(dryRun),
+        created: stats.created,
+        evaluated: stats.evaluated,
+        skipped: stats.skipped,
+        pendingQueued: stats.pendingQueued,
+        message: dryRun
+          ? `[Preview] Evaluated ${stats.evaluated} festival event(s): would create ${stats.created} preparation task(s).`
+          : `Created ${stats.created} festival preparation task(s) from ${stats.evaluated} evaluated event(s).`,
       };
 
     } else {
@@ -1059,6 +1078,42 @@ app.get('/api/cron/daily-automations', async (req: Request, res: Response) => {
     console.error('[Vercel Cron] Rule 6 error:', err);
     results.rule_6 = { status: 'error', error: String(err) };
     await recordRuleError('rule_6_festival_campaign_prep', err);
+  }
+
+  // Rule 7: Daily Morning Operations Plan
+  try {
+    const { executeRule7MorningPlan } = await import('../functions/src/rule_7_morning_plan.js');
+    const sendResendEmail = async (to: string, subject: string, html: string) => {
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) {
+        console.log(`[Resend Mock/Log] API key not set. Email to: ${to}, subject: "${subject}"`);
+        return;
+      }
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnaindustries.com',
+            to,
+            subject,
+            html,
+          }),
+        });
+      } catch (e) {
+        console.error('[Vercel Cron] Resend email send failed:', e);
+      }
+    };
+    const stats = await executeRule7MorningPlan(db, sendResendEmail);
+    results.rule_7 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 7 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 7 error:', err);
+    results.rule_7 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_7_morning_plan', err);
   }
 
   // Write cron heartbeat

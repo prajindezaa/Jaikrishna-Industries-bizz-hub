@@ -15,12 +15,25 @@
 
 import { Firestore, FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
-import { calculateWorkingDayDate } from './index';
+import { calculateWorkingDayDate } from './rule_1_stage_followup';
 
 export interface Rule5Options {
   simulatedTime?: Date;
   forceRunNow?: boolean; // Bypass 08:00 IST check for manual "Run now" triggers
   dryRun?: boolean;
+}
+
+function parseDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date) return val;
+  if (typeof val?.toDate === 'function') return val.toDate();
+  if (typeof val?.seconds === 'number') return new Date(val.seconds * 1000);
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof val === 'number') return new Date(val);
+  return null;
 }
 
 /**
@@ -45,6 +58,7 @@ export async function executeRule5ReorderReminders(
   skipped: number;
   skippedFewerThanTwoOrders: number;
   pendingQueued: number;
+  dryRun?: boolean;
 }> {
   const now = options?.simulatedTime || new Date();
   const dryRun = Boolean(options?.dryRun);
@@ -73,22 +87,45 @@ export async function executeRule5ReorderReminders(
     skipped: 0,
     skippedFewerThanTwoOrders: 0,
     pendingQueued: 0,
+    dryRun,
   };
 
-  // 1. Fetch Rule 5 settings
+  // 1. Fetch or auto-initialize Rule 5 settings
   const ruleRef = db.collection('automation_rules').doc('rule_5_reorder_reminders');
-  const ruleDoc = await ruleRef.get();
-  if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
+  let ruleDoc = await ruleRef.get();
+
+  if (!ruleDoc.exists) {
+    const defaultRule5 = {
+      id: 'rule_5_reorder_reminders',
+      name: 'Rule 5: Smart Reorder Reminders',
+      description: 'Runs daily at 08:00 IST. For old customers with 2+ orders, calculates median order interval. If overdue by 2x median, tags "Reorder overdue" and schedules a check-in call task.',
+      enabled: true,
+      dailyCap: 20,
+      workingDays: [1, 2, 3, 4, 5, 6],
+      fallbackAssignee: 'round_robin',
+      parameters: {
+        leadDaysBefore: 2,
+        overdueMultiplier: 2.0,
+        globalDailyCap: 60,
+      },
+      updatedBy: 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await ruleRef.set(defaultRule5);
+    ruleDoc = await ruleRef.get();
+  }
+
+  const ruleData = ruleDoc.data() || {};
+  if (!ruleData.enabled && !options?.forceRunNow) {
     return stats;
   }
 
-  const ruleData = ruleDoc.data()!;
   const params = ruleData.parameters || {};
 
   // Daily Schedule Check (08:00 IST) unless manual "Run now"
   if (!options?.forceRunNow) {
     const scheduledHour = params.scheduledHour ?? 8; // 08:00 IST default
-    if (kolkataHours < scheduledHour || kolkataHours > scheduledHour + 1) {
+    if (kolkataHours < scheduledHour || kolkataHours > scheduledHour + 2) {
       return stats;
     }
   }
@@ -106,7 +143,23 @@ export async function executeRule5ReorderReminders(
     .get();
 
   stats.evaluated = customersSnap.size;
-  if (customersSnap.empty) return stats;
+  if (customersSnap.empty) {
+    if (!dryRun) {
+      await ruleRef.set({
+        lastRunAt: new Date().toISOString(),
+        lastRunDate: todayStr,
+        lastResult: {
+          status: 'success',
+          createdCount: 0,
+          skippedCount: 0,
+          evaluatedCount: 0,
+          pendingQueuedCount: 0,
+          timestamp: new Date().toISOString(),
+        },
+      }, { merge: true });
+    }
+    return stats;
+  }
 
   const rollingRunRef = db.collection('automation_runs').doc(`rule_5_reorder_${todayStr}`);
 
@@ -131,9 +184,9 @@ export async function executeRule5ReorderReminders(
 
     const orderDates: Date[] = [];
     ordersSnap.forEach((d) => {
-      const oDate = d.data().orderDate;
+      const oDate = parseDate(d.data().orderDate);
       if (oDate) {
-        orderDates.push(new Date(oDate));
+        orderDates.push(oDate);
       }
     });
 
@@ -180,16 +233,20 @@ export async function executeRule5ReorderReminders(
     }
 
     // Duplicate Check: Open task for Rule 5 on this customer already exists
+    // Filtered in memory to match the existing (customerId, automationRuleId, isDeleted) composite index
     const openExistingSnap = await db
       .collection('tasks')
       .where('customerId', '==', customerId)
       .where('automationRuleId', '==', 'rule_5_reorder_reminders')
       .where('isDeleted', '==', false)
-      .where('status', 'in', ['Pending', 'In progress'])
-      .limit(1)
       .get();
 
-    if (!openExistingSnap.empty) {
+    const hasOpenTask = openExistingSnap.docs.some((d) => {
+      const st = d.data()?.status;
+      return st === 'Pending' || st === 'In progress';
+    });
+
+    if (hasOpenTask) {
       stats.skipped++;
       continue;
     }
@@ -257,14 +314,16 @@ export async function executeRule5ReorderReminders(
       continue;
     }
 
-    // Create Reorder Reminder or Check-in Task
-    const assignedTo = cust.assignedTo || 'prajindezaa142@gmail.com';
     const dueDateStr = calculateWorkingDayDate(now, 1, ruleData.workingDays || [1, 2, 3, 4, 5, 6]);
     const taskDocRef = db.collection('tasks').doc(automationKey);
 
-    const taskTitle = isSeverelyOverdue
-      ? `Check in: ${customerName} (Reorder overdue by ${daysSinceLastOrder}d, expected every ${medianGapDays}d)`
-      : `Reorder Reminder: ${customerName} (Usual cycle ${medianGapDays}d reached)`;
+    const title = isSeverelyOverdue
+      ? `Reorder Overdue: Call ${customerName}`
+      : `Reorder Reminder: Call ${customerName}`;
+
+    const description = isSeverelyOverdue
+      ? `Created automatically by Rule 5 (Smart Reorder Reminders). Customer usually reorders every ${medianGapDays} days, but it has been ${daysSinceLastOrder} days (${(daysSinceLastOrder / medianGapDays).toFixed(1)}x usual interval). Reach out to check in and see if stock is needed.`
+      : `Created automatically by Rule 5 (Smart Reorder Reminders). Customer usually reorders every ${medianGapDays} days. Last order was ${daysSinceLastOrder} days ago. Expected reorder is due in ~${Math.max(0, medianGapDays - daysSinceLastOrder)} day(s).`;
 
     if (!dryRun) {
       await db.runTransaction(async (transaction) => {
@@ -273,16 +332,16 @@ export async function executeRule5ReorderReminders(
 
         transaction.set(taskDocRef, {
           id: automationKey,
-          title: taskTitle,
-          description: `Created automatically by Rule 5 (Smart Reorder Reminders). Customer has ${ordersSnap.size} past orders with a calculated median reorder interval of ${medianGapDays} days. Last order was placed on ${latestOrderDate.toISOString().slice(0, 10)} (${daysSinceLastOrder} days ago). Contact customer to confirm stock levels and take new pooja camphor / agarbatti order.`,
+          title,
+          description,
           customerId,
           customerName,
           type: 'Call',
-          assignedTo,
-          priority: isSeverelyOverdue ? 'High' : 'Medium',
+          assignedTo: cust.assignedTo || 'prajindezaa142@gmail.com',
+          priority: isSeverelyOverdue ? 'Urgent' : 'High',
           date: dueDateStr,
-          startTime: '10:30',
-          endTime: '11:00',
+          startTime: '10:00',
+          endTime: '10:30',
           repeat: 'None',
           status: 'Pending',
           isDeleted: false,
@@ -291,8 +350,8 @@ export async function executeRule5ReorderReminders(
           automationRuleId: 'rule_5_reorder_reminders',
           automationKey,
           automationRunId: rollingRunRef.id,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
           lastEditedBy: null,
           lastEditedAt: null,
         });
@@ -301,7 +360,7 @@ export async function executeRule5ReorderReminders(
           rollingRunRef,
           {
             ruleId: 'rule_5_reorder_reminders',
-            ruleName: 'Smart Reorder Reminders',
+            ruleName: 'Smart Reorder Reminders Engine',
             startedAt: todayStr,
             finishedAt: new Date().toISOString(),
             status: 'completed',
@@ -319,7 +378,7 @@ export async function executeRule5ReorderReminders(
         action: 'automation_task_created',
         byAutomation: true,
         automationRuleId: 'rule_5_reorder_reminders',
-        details: `Scheduled ${isSeverelyOverdue ? 'overdue check-in' : 'reorder reminder'} task for ${customerName} (Median interval: ${medianGapDays}d, Days since last: ${daysSinceLastOrder}d)`,
+        details: `Scheduled reorder task "${title}" assigned to ${cust.assignedTo || 'prajindezaa142@gmail.com'} (Due ${dueDateStr})`,
         taskId: automationKey,
         customerId,
         createdAt: FieldValue.serverTimestamp(),
@@ -331,7 +390,7 @@ export async function executeRule5ReorderReminders(
 
   // Update rule lastResult reporting skipped count for < 2 orders (skip in dryRun)
   if (!dryRun) {
-    await ruleRef.update({
+    await ruleRef.set({
       lastRunAt: new Date().toISOString(),
       lastResult: {
         status: 'success',
@@ -345,7 +404,7 @@ export async function executeRule5ReorderReminders(
         error: null,
         timestamp: new Date().toISOString(),
       },
-    });
+    }, { merge: true });
   }
 
   return stats;
