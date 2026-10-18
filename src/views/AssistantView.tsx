@@ -79,8 +79,8 @@ export const AssistantView: React.FC = () => {
         setIsListening(true);
       };
 
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = event.results[0][0].transcript;
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
         setInput(transcript);
         setIsListening(false);
       };
