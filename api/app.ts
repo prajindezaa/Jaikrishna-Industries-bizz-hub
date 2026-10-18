@@ -959,6 +959,122 @@ ${context ? JSON.stringify(context, null, 2) : 'No live workspace context provid
 });
 
 
+// =====================================================================
+// VERCEL CRON: Daily Automation Engine
+// Runs every day at 08:00 IST (02:30 UTC) — triggered by Vercel Cron.
+// Executes Rules 2, 3, 4, 5, 6 sequentially.
+// Secured via CRON_SECRET header check.
+// =====================================================================
+app.get('/api/cron/daily-automations', async (req: Request, res: Response) => {
+  // Vercel Cron sends the secret via Authorization header
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.authorization;
+
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    res.status(401).json({ error: 'Unauthorized: Invalid CRON_SECRET.' });
+    return;
+  }
+
+  console.log('[Vercel Cron] Daily automation engine started at', new Date().toISOString());
+
+  const adminSdk = getFirebaseAdmin();
+  const db = adminSdk.firestore();
+  const results: Record<string, any> = {};
+
+  // Helper: record error on the rule document
+  const recordRuleError = async (ruleId: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      await db.collection('automation_rules').doc(ruleId).set({
+        lastRunAt: new Date().toISOString(),
+        lastResult: {
+          status: 'error',
+          createdCount: 0,
+          skippedCount: 0,
+          skipReasons: {},
+          error: message,
+          timestamp: new Date().toISOString(),
+        },
+      }, { merge: true });
+    } catch (logErr) {
+      console.error(`Failed to record error for ${ruleId}:`, logErr);
+    }
+  };
+
+  // Rule 2: Idle Lead Re-Engagement
+  try {
+    const { executeRule2IdleLeadCheck } = await import('../functions/src/rule_2_idle_lead.js');
+    const stats = await executeRule2IdleLeadCheck(db, { forceRunNow: true });
+    results.rule_2 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 2 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 2 error:', err);
+    results.rule_2 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_2_idle_lead_reengagement', err);
+  }
+
+  // Rule 3: Auto Cold Tag
+  try {
+    const { executeRule3AutoStageCold } = await import('../functions/src/rule_3_auto_cold.js');
+    const stats = await executeRule3AutoStageCold(db, { triggeredBy: 'scheduled_cron' });
+    results.rule_3 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 3 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 3 error:', err);
+    results.rule_3 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_3_auto_stage_cold', err);
+  }
+
+  // Rule 4: Inactive Lead Revival
+  try {
+    const { executeRule4ColdRevival } = await import('../functions/src/rule_4_cold_revival.js');
+    const stats = await executeRule4ColdRevival(db, { forceRunNow: true });
+    results.rule_4 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 4 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 4 error:', err);
+    results.rule_4 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_4_cold_revival', err);
+  }
+
+  // Rule 5: Reorder Reminders
+  try {
+    const { executeRule5ReorderReminders } = await import('../functions/src/rule_5_reorder.js');
+    const stats = await executeRule5ReorderReminders(db, { forceRunNow: true });
+    results.rule_5 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 5 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 5 error:', err);
+    results.rule_5 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_5_reorder_reminders', err);
+  }
+
+  // Rule 6: Festival Campaign Prep
+  try {
+    const { executeRule6FestivalCampaignPrep } = await import('../functions/src/rule_6_festival.js');
+    const stats = await executeRule6FestivalCampaignPrep(db);
+    results.rule_6 = { status: 'success', ...stats };
+    console.log('[Vercel Cron] Rule 6 completed:', stats);
+  } catch (err) {
+    console.error('[Vercel Cron] Rule 6 error:', err);
+    results.rule_6 = { status: 'error', error: String(err) };
+    await recordRuleError('rule_6_festival_campaign_prep', err);
+  }
+
+  // Write cron heartbeat
+  try {
+    await db.collection('system_settings').doc('automation_heartbeat').set({
+      lastVercelCronRun: new Date().toISOString(),
+      lastCronResults: results,
+    }, { merge: true });
+  } catch (err) {
+    console.error('[Vercel Cron] Failed to write heartbeat:', err);
+  }
+
+  console.log('[Vercel Cron] Daily automation engine finished at', new Date().toISOString());
+  res.json({ success: true, executedAt: new Date().toISOString(), results });
+});
+
 // Global JSON error handler — must be last. Ensures any unhandled Express error
 // returns JSON instead of Vercel's plain-text "A server error has occurred".
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
