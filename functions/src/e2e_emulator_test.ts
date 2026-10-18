@@ -70,7 +70,14 @@ async function seedData() {
   await db.collection('automation_rules').doc('rule_1_auto_followup').set({
     enabled: true,
     name: 'Auto Follow-up Tasks',
-    parameters: { stageConfigs: { 'Interested': { taskTitle: 'Follow up: call {name}', daysAfter: 1 } } },
+    parameters: {
+      stages: {
+        'Sample sent': { enabled: true, titleTemplate: 'Call {customer} to ask about sample', taskType: 'Call', daysAfter: 3, priority: 'High' },
+        'Interested': { enabled: true, titleTemplate: 'Send price and offer to {customer}', taskType: 'WhatsApp', daysAfter: 1, priority: 'Medium' },
+        'Negotiation': { enabled: true, titleTemplate: 'Follow up on negotiation with {customer}', taskType: 'Call', daysAfter: 2, priority: 'High' },
+        'Contacted': { enabled: true, titleTemplate: 'Follow-up call to {customer}', taskType: 'Call', daysAfter: 3, priority: 'Medium' },
+      },
+    },
     workingDays: [1, 2, 3, 4, 5, 6],
   });
 
@@ -221,6 +228,87 @@ async function seedData() {
 }
 
 // ============================================================================
+// TEST: Rule 1 — Auto Follow-up Tasks on Stage Change
+// ============================================================================
+async function testRule1() {
+  console.log('\n🧪 TEST: Rule 1 — Auto Follow-up Tasks on Stage Change');
+
+  const { executeRule1CustomerStageChange } = await import('./rule_1_stage_followup');
+
+  const custId = 'cust_rule1_test';
+  await db.collection('customers').doc(custId).set({
+    companyName: 'Rule 1 Test Corp',
+    contactPerson: 'Ravi Kumar',
+    leadStage: 'Sample sent',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member1@test.com',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  // 1. Stage changed to 'Sample sent' -> Rule 1 creates task
+  const res1 = await executeRule1CustomerStageChange(db as any, {
+    customerId: custId,
+    beforeStage: 'New',
+    newStage: 'Sample sent',
+  });
+  console.log(`  Rule 1 (first trigger) status: ${res1.status}, taskId: ${res1.taskId}`);
+
+  const tasksSnap1 = await db.collection('tasks')
+    .where('customerId', '==', custId)
+    .where('automationRuleId', '==', 'rule_1_auto_followup')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(tasksSnap1.size === 1, 'Rule 1: Exactly one task created on stage change', `tasks found=${tasksSnap1.size}`);
+
+  const firstTaskId = tasksSnap1.docs[0].id;
+  const firstTaskData = tasksSnap1.docs[0].data();
+  assert(firstTaskData.status === 'Pending', 'Rule 1: Created task is Pending', `status=${firstTaskData.status}`);
+
+  // 2. Save same stage again -> still exactly one task (no duplicates)
+  const res2 = await executeRule1CustomerStageChange(db as any, {
+    customerId: custId,
+    beforeStage: 'Sample sent',
+    newStage: 'Sample sent',
+  });
+  console.log(`  Rule 1 (same stage re-save) status: ${res2.status}`);
+
+  const tasksSnap2 = await db.collection('tasks')
+    .where('customerId', '==', custId)
+    .where('automationRuleId', '==', 'rule_1_auto_followup')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(tasksSnap2.size === 1, 'Rule 1: Still exactly one task after re-saving same stage', `tasks found=${tasksSnap2.size}`);
+
+  // 3. Advance stage to 'Negotiation' -> old untouched task goes to Trash (isDeleted: true), new task created
+  await db.collection('customers').doc(custId).update({
+    leadStage: 'Negotiation',
+    updatedAt: new Date().toISOString(),
+  });
+
+  const res3 = await executeRule1CustomerStageChange(db as any, {
+    customerId: custId,
+    beforeStage: 'Sample sent',
+    newStage: 'Negotiation',
+  });
+  console.log(`  Rule 1 (advanced to Negotiation) status: ${res3.status}`);
+
+  const oldTaskDoc = await db.collection('tasks').doc(firstTaskId).get();
+  const oldTaskData = oldTaskDoc.data();
+  assert(oldTaskData?.isDeleted === true, 'Rule 1: Old untouched task marked deleted (Trash)', `isDeleted=${oldTaskData?.isDeleted}`);
+
+  const tasksSnap3 = await db.collection('tasks')
+    .where('customerId', '==', custId)
+    .where('automationRuleId', '==', 'rule_1_auto_followup')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(tasksSnap3.size === 1, 'Rule 1: Exactly one active task for new stage', `tasks found=${tasksSnap3.size}`);
+  assert(tasksSnap3.docs[0].data().automationStage === 'Negotiation', 'Rule 1: Active task is for Negotiation stage', `stage=${tasksSnap3.docs[0].data().automationStage}`);
+}
+
+// ============================================================================
 // TEST: Rule 3 — Cold Tagging
 // ============================================================================
 async function testRule3() {
@@ -359,6 +447,7 @@ async function main() {
     console.log('═══════════════════════════════════════════════════════');
 
     await seedData();
+    await testRule1();
     await testRule3();
     await testRule4();
     await testRule5();

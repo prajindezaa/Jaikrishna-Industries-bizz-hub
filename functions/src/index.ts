@@ -382,51 +382,16 @@ async function sendResendEmail(to: string, subject: string, html: string) {
  * Example: Friday + 2 days = Sunday -> Shifts to Monday.
  * Example: Saturday (Oct 31) + 2 days = Monday Nov 2.
  */
-export function calculateWorkingDayDate(baseDate: Date, calendarDaysToAdd: number, workingDays: number[] = [1, 2, 3, 4, 5, 6]): string {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-
-  const target = new Date(baseDate.getTime());
-  target.setDate(target.getDate() + calendarDaysToAdd);
-
-  // Shift forward if landing on non-working day
-  while (true) {
-    const parts = formatter.formatToParts(target);
-    const y = parts.find((p) => p.type === 'year')?.value;
-    const m = parts.find((p) => p.type === 'month')?.value;
-    const d = parts.find((p) => p.type === 'day')?.value;
-    const kolkataDate = new Date(`${y}-${m}-${d}T12:00:00+05:30`);
-    const dayOfWeek = kolkataDate.getDay();
-
-    if (workingDays.includes(dayOfWeek)) {
-      break;
-    }
-    target.setDate(target.getDate() + 1);
-  }
-
-  const parts = formatter.formatToParts(target);
-  const year = parts.find((p) => p.type === 'year')?.value;
-  const month = parts.find((p) => p.type === 'month')?.value;
-  const day = parts.find((p) => p.type === 'day')?.value;
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Checks if a task is untouched by human members.
- * Untouched: Pending, not completed, lastEditedBy == null, lastEditedAt == null.
- */
-export function isTaskUntouched(task: admin.firestore.DocumentData): boolean {
-  return (
-    task.status === 'Pending' &&
-    !task.completedAt &&
-    !task.lastEditedBy &&
-    !task.lastEditedAt
-  );
-}
+export {
+  calculateWorkingDayDate,
+  isTaskUntouched,
+  executeRule1CustomerStageChange,
+} from './rule_1_stage_followup';
+import {
+  calculateWorkingDayDate,
+  isTaskUntouched,
+  executeRule1CustomerStageChange,
+} from './rule_1_stage_followup';
 
 /**
  * RULE 1: Auto Follow-Up Tasks When Customer Stage Changes (Create & Update)
@@ -436,269 +401,18 @@ export async function handleCustomerStageChangeRule1Core(
   customerId: string,
   beforeData: admin.firestore.DocumentData | null,
   afterData: admin.firestore.DocumentData | null,
-  eventId: string = `evt_${Date.now()}`
+  eventId: string = 'evt_' + Date.now()
 ): Promise<{ status: string; reason?: string; taskId?: string }> {
-  // Document was deleted
-  if (!afterData) return { status: 'skipped', reason: 'document_deleted' };
-
-  const newStage = afterData.leadStage;
-  const previousStage = beforeData ? beforeData.leadStage : null;
-
-    // Filter early: Proceed if stage was changed or if newly created with a defined stage
-    if (beforeData && beforeData.leadStage === afterData.leadStage) return { status: 'skipped', reason: 'stage_unchanged' };
-    if (!newStage) return { status: 'skipped', reason: 'no_stage' };
-
-    // Prevent automation loops: ignore changes authored by system or automation
-    if (afterData.lastWriteSource === 'system' || afterData.lastWriteSource === 'automation') {
-      console.log('[Rule 1 Loop Guard] Skipping update authored by automation/system.');
-      return { status: 'skipped', reason: 'loop_guard' };
-    }
-
-    const customerName = afterData.companyName || afterData.contactPerson || 'Customer';
-
-    console.log(`[Rule 1] Stage change detected for ${customerId}: "${previousStage || 'None'}" -> "${newStage}" (Source: ${afterData.lastWriteSource})`);
-
-    // Fetch Rule 1 configuration
-    const ruleRef = db.collection('automation_rules').doc('rule_1_auto_followup');
-    const ruleDoc = await ruleRef.get();
-
-    // 1. Check Previous-Stage Task Replacement (In all cases, even if rule is OFF or new stage has no task rule, e.g. Ordered)
-    const previousTasksSnap = await db
-      .collection('tasks')
-      .where('customerId', '==', customerId)
-      .where('automationRuleId', '==', 'rule_1_auto_followup')
-      .where('isDeleted', '==', false)
-      .get();
-
-    for (const pDoc of previousTasksSnap.docs) {
-      const pTask = pDoc.data();
-      if (isTaskUntouched(pTask)) {
-        await pDoc.ref.update({
-          isDeleted: true,
-          deletedAt: FieldValue.serverTimestamp(),
-          deletedBy: 'automation (stage changed)',
-          status: 'Missed',
-          completionNote: `Auto-cancelled: Customer stage changed from ${previousStage} to ${newStage}`,
-        });
-        console.log(`[Rule 1] Auto-cancelled untouched task ${pDoc.id} due to stage advancement.`);
-      } else if (pTask.status !== 'Done' && pTask.status !== 'Missed') {
-        // Touched task: notify assignee instead of deleting
-        const assignee = pTask.assignedTo || 'prajindezaa142@gmail.com';
-        await db.collection('notifications').add({
-          recipientEmail: assignee,
-          title: `Stage Changed for ${customerName}`,
-          body: `Stage changed to "${newStage}", but existing task "${pTask.title}" was already edited/started and was preserved.`,
-          type: 'general',
-          deepLink: `/tasks?id=${pDoc.id}`,
-          isRead: false,
-          createdAt: FieldValue.serverTimestamp(),
-        });
-      }
-    }
-
-    if (!ruleDoc.exists || !ruleDoc.data()?.enabled) {
-      console.log('[Rule 1] Rule is currently OFF. Skipping new task creation.');
-      return { status: 'skipped', reason: 'rule_disabled' };
-    }
-
-    const ruleData = ruleDoc.data()!;
-    const params = ruleData.parameters || {};
-
-    // Check option "Do not create tasks during imports"
-    if (afterData.lastWriteSource === 'bulk_import' && params.skipOnImport && !afterData.skipOnImportOverride) {
-      console.log(`[Rule 1] Skipping task creation for bulk imported customer ${customerId}`);
-      return { status: 'skipped', reason: 'skipped_on_import' };
-    }
-
-    // Lookup stage rule configuration for the new stage
-    const stageConfig = params.stages?.[newStage] || params.stageConfigs?.[newStage];
-    if (!stageConfig || stageConfig.enabled === false) {
-      console.log(`[Rule 1] No active stage rule for stage "${newStage}". Skipping.`);
-      return { status: 'skipped', reason: 'no_stage_config' };
-    }
-
-    // Extra Duplicate Protection: check if an open automation task exists for same customer, rule, and stage
-    const openSameStageSnap = await db
-      .collection('tasks')
-      .where('customerId', '==', customerId)
-      .where('automationRuleId', '==', 'rule_1_auto_followup')
-      .where('automationStage', '==', newStage)
-      .where('isDeleted', '==', false)
-      .where('status', 'in', ['Pending', 'In progress'])
-      .limit(1)
-      .get();
-
-    if (!openSameStageSnap.empty) {
-      console.log(`[Rule 1] Duplicate protection: Open task for customer ${customerId} and stage "${newStage}" already exists.`);
-      return { status: 'skipped', reason: 'duplicate_open_task_exists' };
-    }
-
-    // Determine deterministic timestamp from document saved timestamp or event ID
-    const stageTimestamp = afterData.updatedAt?.toMillis ? String(afterData.updatedAt.toMillis()) : eventId;
-    const automationKey = crypto
-      .createHash('sha256')
-      .update(`rule_1:${customerId}:${newStage}:${stageTimestamp}`)
-      .digest('hex');
-
-    // Determine target assignee
-    let assignedTo = afterData.assignedTo;
-    if (!assignedTo) {
-      if (ruleData.fallbackAssignee === 'round_robin') {
-        const teamSnap = await db.collection('allowed_emails').limit(3).get();
-        const emails = teamSnap.docs.map((d) => d.id);
-        const currentIndex = ruleData.roundRobinIndex || 0;
-        assignedTo = emails.length > 0 ? emails[currentIndex % emails.length] : 'prajindezaa142@gmail.com';
-        await ruleRef.update({ roundRobinIndex: currentIndex + 1 });
-      } else {
-        assignedTo = afterData.updatedBy || 'prajindezaa142@gmail.com';
-      }
-    }
-
-    const now = new Date();
-    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
-    const workingDays = ruleData.workingDays || [1, 2, 3, 4, 5, 6];
-    const dueDateStr = calculateWorkingDayDate(now, stageConfig.daysAfter || 1, workingDays);
-
-    // Daily Cap & Global Cap Check with Transaction
-    const capCounterRef = db.collection('system_settings').doc(`automation_cap_${todayStr}`);
-    const globalCap = params.globalDailyCap || 60;
-    const perRuleCap = ruleData.dailyCap || 30;
-
-    let isCapHit = false;
-
-    await db.runTransaction(async (transaction) => {
-      const capDoc = await transaction.get(capCounterRef);
-      const capData = capDoc.data() || {};
-      const globalCount = capData.globalCount || 0;
-      const rule1Count = capData.rule1Count || 0;
-
-      if (globalCount >= globalCap || rule1Count >= perRuleCap) {
-        isCapHit = true;
-        return;
-      }
-
-      transaction.set(
-        capCounterRef,
-        {
-          globalCount: globalCount + 1,
-          rule1Count: rule1Count + 1,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    });
-
-    // Overflow Handling: If cap is reached, store in automation_pending
-    if (isCapHit) {
-      console.warn(`[Rule 1] Daily cap reached. Storing in automation_pending.`);
-      await db.collection('automation_pending').doc(automationKey).set({
-        id: automationKey,
-        ruleId: 'rule_1_auto_followup',
-        customerId,
-        customerName,
-        stage: newStage,
-        assignedTo,
-        targetCalendarDays: stageConfig.daysAfter || 1,
-        queuedAt: new Date().toISOString(),
-        attemptedDate: todayStr,
-        status: 'queued',
-      });
-
-      // Notify members in-app that items were deferred
-      await db.collection('notifications').add({
-        recipientEmail: assignedTo,
-        title: 'Daily Automation Cap Reached',
-        body: `Follow-up task for ${customerName} was queued in automation_pending and will be scheduled on the next morning run.`,
-        type: 'general',
-        deepLink: '/automations',
-        isRead: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-      return { status: 'queued_overflow', taskId: automationKey };
-    }
-
-    // Transactional task creation using automationKey as Document ID
-    const taskDocRef = db.collection('tasks').doc(automationKey);
-    const rollingRunRef = db.collection('automation_runs').doc(`rule_1_auto_followup_${todayStr}`);
-
-    const title = (stageConfig.titleTemplate || stageConfig.taskTitle || 'Follow up with {customer}')
-      .replace(/{customer}/g, customerName)
-      .replace(/{name}/g, customerName)
-      .replace(/{stage}/g, newStage)
-      .replace(/{days}/g, String(stageConfig.daysAfter || 1));
-
-    await db.runTransaction(async (transaction) => {
-      const existingTaskDoc = await transaction.get(taskDocRef);
-      if (existingTaskDoc.exists) {
-        console.log(`[Rule 1 Idempotency] Task ${automationKey} already exists. Skipping.`);
-        return;
-      }
-
-      transaction.set(taskDocRef, {
-        id: automationKey,
-        title,
-        description: `Created automatically by Rule 1 (Auto Follow-up Tasks) upon customer stage transition to "${newStage}".`,
-        customerId,
-        customerName,
-        type: stageConfig.taskType || 'Call',
-        assignedTo,
-        priority: stageConfig.priority || 'Medium',
-        date: dueDateStr,
-        startTime: stageConfig.startTime || '10:00',
-        endTime: stageConfig.endTime || '10:30',
-        repeat: 'None',
-        status: 'Pending',
-        isDeleted: false,
-        createdBy: 'automation',
-        isAutomation: true,
-        automationRuleId: 'rule_1_auto_followup',
-        automationKey,
-        automationStage: newStage,
-        automationRunId: rollingRunRef.id,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        lastEditedBy: null,
-        lastEditedAt: null,
-      });
-
-      // Update rolling run document
-      transaction.set(
-        rollingRunRef,
-        {
-          ruleId: 'rule_1_auto_followup',
-          ruleName: 'Auto Follow-up Tasks on Stage Change',
-          startedAt: todayStr,
-          finishedAt: new Date().toISOString(),
-          status: 'completed',
-          createdCount: FieldValue.increment(1),
-          createdTaskIds: FieldValue.arrayUnion(automationKey),
-          settingsSnapshot: ruleData,
-          undone: false,
-          triggeredBy: 'firestore_trigger',
-        },
-        { merge: true }
-      );
-    });
-
-    // Write to activity_logs
-    await db.collection('activity_logs').add({
-      action: 'automation_task_created',
-      byAutomation: true,
-      automationRuleId: 'rule_1_auto_followup',
-      details: `Created task "${title}" for ${assignedTo} (Due ${dueDateStr})`,
-      taskId: automationKey,
-      customerId,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    console.log(`[Rule 1] Transactionally created task ${automationKey} for ${assignedTo}.`);
-    return { status: 'created', taskId: automationKey };
+  return executeRule1CustomerStageChange(db, {
+    customerId,
+    beforeStage: beforeData?.leadStage,
+    newStage: afterData?.leadStage,
+    customerData: afterData,
+    eventId,
+    lastWriteSource: afterData?.lastWriteSource,
+  });
 }
 
-/**
- * RULE 1: Auto Follow-Up Tasks When Customer Stage Changes (Create & Update)
- * Trigger: Firestore onDocumentWritten on customers/{customerId}
- */
 export const onCustomerStageChangeRule1 = onDocumentWritten(
   'customers/{customerId}',
   async (event) => {

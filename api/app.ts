@@ -735,6 +735,33 @@ app.post('/api/automations/run-now', standardRateLimiter, requireAuth, async (re
   }
 });
 
+// 6b. Rule 1: Customer Stage Changed Trigger (Runs seamlessly on Vercel)
+app.post('/api/automations/customer-stage-changed', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { customerId, beforeStage, newStage, lastWriteSource } = req.body;
+  if (!customerId || !newStage) {
+    res.status(400).json({ error: 'customerId and newStage are required.' });
+    return;
+  }
+
+  try {
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+    const { executeRule1CustomerStageChange } = await import('../functions/src/rule_1_stage_followup.js');
+
+    const result = await executeRule1CustomerStageChange(db, {
+      customerId,
+      beforeStage,
+      newStage,
+      lastWriteSource: lastWriteSource || 'manual_edit',
+    });
+
+    res.json({ success: true, result });
+  } catch (err: any) {
+    console.error('[Rule 1 API Trigger Error]:', err);
+    res.status(500).json({ error: 'Failed to process stage change automation', details: err?.message || String(err) });
+  }
+});
+
 // 7. Offline Rule-Based Assistant Generator (Clearly marked as non-AI)
 function getSmartAssistantFallback(message: string, context: any): string {
   const q = message.toLowerCase();

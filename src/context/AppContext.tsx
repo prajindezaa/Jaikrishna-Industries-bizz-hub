@@ -611,6 +611,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newDocRef.id;
   };
 
+  const triggerRule1StageChange = (
+    customerId: string,
+    beforeStage: string | undefined,
+    newStage: string,
+    lastWriteSource: string = 'manual_edit'
+  ) => {
+    (async () => {
+      try {
+        const idToken = user ? await user.getIdToken() : '';
+        await fetch('/api/automations/customer-stage-changed', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+          },
+          body: JSON.stringify({
+            customerId,
+            beforeStage: beforeStage || null,
+            newStage,
+            lastWriteSource,
+          }),
+        });
+      } catch (err) {
+        console.warn('[Rule 1 Frontend Trigger] Notice: trigger failed:', err);
+      }
+    })();
+  };
+
   const updateCustomer = async (id: string, updates: Partial<Customer>): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
     const existing = customers.find((c) => c.id === id);
@@ -657,6 +685,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     await updateDoc(doc(db, 'customers', id), nextUpdates);
     await logActivity('customer', id, 'update', `Updated customer ${existing?.companyName || id}`);
+
+    // Trigger Rule 1 stage change automation
+    if (existing && updates.leadStage && updates.leadStage !== existing.leadStage) {
+      triggerRule1StageChange(id, existing.leadStage, updates.leadStage, nextUpdates.lastWriteSource);
+    }
   };
 
   const softDeleteCustomer = async (id: string): Promise<void> => {
@@ -767,6 +800,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await updateDoc(doc(db, 'customers', customerId), updates);
     await addDoc(collection(db, 'customers', customerId, 'outreach_logs'), outreachEntry);
     await logActivity('customer', customerId, 'update', `Logged ${log.channel} outcome (${log.outcome}) for ${customer.companyName}`);
+
+    // Trigger Rule 1 automation if outreach caused a stage change
+    if (newStage && newStage !== customer.leadStage) {
+      triggerRule1StageChange(customerId, customer.leadStage, newStage, 'manual_edit');
+    }
   };
 
   const importCustomersBatch = async (
