@@ -556,11 +556,45 @@ export const AutomationRulesView: React.FC = () => {
                   <span className="px-2 py-0.5 rounded-md bg-white border border-stone-200 text-[10px] font-medium text-stone-700">Sample sent</span>
                 </div>
               </div>
+
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Run Result:</span>
+                  <span className={`font-mono ${rules['rule_2_idle_lead_reengagement'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_2_idle_lead_reengagement'].lastResult?.status || 'Never evaluated'}
+                  </span>
+                </div>
+                {rules['rule_2_idle_lead_reengagement'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_2_idle_lead_reengagement'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_2_idle_lead_reengagement'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_2_idle_lead_reengagement'].lastResult?.error}
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
-              <span className="text-[11px] text-stone-500">Evaluates daily in Asia/Kolkata</span>
-              <span className="text-[10px] text-stone-400">Safe duplicate-check</span>
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleRunNow('rule_2_idle_lead_reengagement', true)}
+                disabled={runningRuleId === 'rule_2_idle_lead_reengagement'}
+                className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-900 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-50 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-stone-500" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => handleRunNow('rule_2_idle_lead_reengagement', false)}
+                disabled={runningRuleId === 'rule_2_idle_lead_reengagement' || !rules['rule_2_idle_lead_reengagement'].enabled}
+                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-[#881337] hover:bg-[#6b0f2b] disabled:bg-stone-300 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer"
+              >
+                {runningRuleId === 'rule_2_idle_lead_reengagement' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>Run Now</span>
+              </button>
             </div>
           </div>
         )}

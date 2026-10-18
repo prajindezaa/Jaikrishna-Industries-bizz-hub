@@ -533,6 +533,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [configured, user, retryCount]);
 
+  // Automated background daily check for Rule 2 (Idle Lead Re-Engagement) on Vercel
+  useEffect(() => {
+    if (!user) return;
+    const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    const lastCheckDate = localStorage.getItem('last_idle_lead_check_date');
+    if (lastCheckDate === todayStr) return;
+
+    (async () => {
+      try {
+        localStorage.setItem('last_idle_lead_check_date', todayStr);
+        const idToken = await user.getIdToken();
+        await fetch('/api/automations/run-now', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            ruleId: 'rule_2_idle_lead_reengagement',
+            dryRun: false,
+          }),
+        });
+      } catch (err) {
+        console.warn('[Rule 2 Daily Check] Background run notice:', err);
+      }
+    })();
+  }, [user]);
+
   // Activity Log Helper
   const logActivity = async (
     entity: ActivityLog['entity'],

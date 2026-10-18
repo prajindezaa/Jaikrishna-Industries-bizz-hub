@@ -55,11 +55,28 @@ function assert(condition: boolean, testName: string, detail: string = '') {
   }
 }
 
+async function clearCollections() {
+  const collections = ['tasks', 'customers', 'orders', 'automation_runs', 'system_settings', 'activity_logs', 'automation_pending', 'notifications'];
+  for (const col of collections) {
+    const snap = await db.collection(col).get();
+    for (const doc of snap.docs) {
+      if (col === 'customers') {
+        const subSnap = await doc.ref.collection('outreach_logs').get();
+        for (const subDoc of subSnap.docs) {
+          await subDoc.ref.delete();
+        }
+      }
+      await doc.ref.delete();
+    }
+  }
+}
+
 // ============================================================================
 // SEED TEST DATA
 // ============================================================================
 async function seedData() {
   console.log('\n📦 Seeding test data...');
+  await clearCollections();
 
   // Allowed emails (team members)
   await db.collection('allowed_emails').doc('member1@test.com').set({ allowed: true, role: 'Admin' });
@@ -79,6 +96,18 @@ async function seedData() {
       },
     },
     workingDays: [1, 2, 3, 4, 5, 6],
+  });
+
+  await db.collection('automation_rules').doc('rule_2_idle_lead_reengagement').set({
+    enabled: true,
+    name: 'Rule 2: Idle Lead Re-Engagement',
+    dailyCap: 20,
+    workingDays: [1, 2, 3, 4, 5, 6],
+    parameters: {
+      idleDaysThreshold: 7,
+      targetStages: ['Interested', 'Contacted', 'Sample sent'],
+      globalDailyCap: 60,
+    },
   });
 
   await db.collection('automation_rules').doc('rule_3_auto_stage_cold').set({
@@ -109,12 +138,53 @@ async function seedData() {
     workingDays: [1, 2, 3, 4, 5, 6],
   });
 
+  // ---- Customers for Rule 2 ----
+  // Idle lead: Inactive for 10 days in 'Interested' stage -> should receive a re-engagement call task
+  await db.collection('customers').doc('cust_rule2_idle').set({
+    companyName: 'Sri Murugan Traders',
+    contactPerson: 'Murugan',
+    leadStage: 'Interested',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member1@test.com',
+    createdAt: daysBefore(20),
+    updatedAt: daysBefore(10),
+  });
+
+  // Active lead: Updated 2 days ago (< 7 days idle) -> should be skipped
+  await db.collection('customers').doc('cust_rule2_active').set({
+    companyName: 'Kaveri Camphor Mart',
+    contactPerson: 'Kaveri',
+    leadStage: 'Interested',
+    status: 'New lead',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member2@test.com',
+    createdAt: daysBefore(15),
+    updatedAt: daysBefore(2),
+  });
+
+  // Converted / Ordered customer: in 'Contacted' stage but status 'Old customer' -> should be skipped by in-memory check
+  await db.collection('customers').doc('cust_rule2_ordered').set({
+    companyName: 'Madurai Deepam Stores',
+    contactPerson: 'Sundaram',
+    leadStage: 'Contacted',
+    status: 'Old customer',
+    isDeleted: false,
+    tags: [],
+    assignedTo: 'member3@test.com',
+    totalOrdersCount: 2,
+    createdAt: daysBefore(30),
+    updatedAt: daysBefore(15),
+  });
+
   // ---- Customers for Rule 3 ----
   // Customer with 3 consecutive 'No answer' outcomes → should get Cold tag
   await db.collection('customers').doc('cust_rule3_cold').set({
     companyName: 'Rule3 Cold Test Co',
     contactPerson: 'Test Person',
-    leadStage: 'Interested',
+    leadStage: 'New',
     status: 'New lead',
     isDeleted: false,
     tags: [],
@@ -135,7 +205,7 @@ async function seedData() {
   await db.collection('customers').doc('cust_rule3_safe').set({
     companyName: 'Rule3 Safe Test Co',
     contactPerson: 'Safe Person',
-    leadStage: 'Contacted',
+    leadStage: 'New',
     status: 'New lead',
     isDeleted: false,
     tags: [],
@@ -162,7 +232,7 @@ async function seedData() {
   await db.collection('customers').doc('cust_rule4_inactive').set({
     companyName: 'Rule4 Inactive Lead Co',
     contactPerson: 'Inactive Person',
-    leadStage: 'Interested',
+    leadStage: 'Negotiation',
     status: 'New lead',
     isDeleted: false,
     tags: [],
@@ -309,6 +379,74 @@ async function testRule1() {
 }
 
 // ============================================================================
+// TEST: Rule 2 — Idle Lead Re-Engagement
+// ============================================================================
+async function testRule2() {
+  console.log('\n🧪 TEST: Rule 2 — Idle Lead Re-Engagement Engine');
+
+  const { executeRule2IdleLeadCheck } = await import('./rule_2_idle_lead');
+
+  // 1. Dry run should calculate candidates but NOT write tasks to Firestore
+  const statsDry = await executeRule2IdleLeadCheck(db as any, { forceRunNow: true, dryRun: true });
+  console.log(`  Rule 2 (dryRun) stats: evaluated=${statsDry.evaluated}, created=${statsDry.created}, skipped=${statsDry.skipped}`);
+  assert(statsDry.created >= 1, 'Rule 2: dryRun calculates created tasks count', `created=${statsDry.created}`);
+
+  const dryTasksSnap = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule2_idle')
+    .where('automationRuleId', '==', 'rule_2_idle_lead_reengagement')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(dryTasksSnap.size === 0, 'Rule 2: dryRun does NOT write tasks to Firestore', `tasks found=${dryTasksSnap.size}`);
+
+  // 2. Real execution
+  const stats = await executeRule2IdleLeadCheck(db as any, { forceRunNow: true });
+  console.log(`  Rule 2 stats: evaluated=${stats.evaluated}, created=${stats.created}, skipped=${stats.skipped}`);
+
+  assert(stats.created >= 1, 'Rule 2: Created at least 1 idle re-engagement task', `created=${stats.created}`);
+  assert(stats.skipped >= 2, 'Rule 2: Skipped active lead and ordered customer', `skipped=${stats.skipped}`);
+
+  // 3. Verify task created for idle lead
+  const idleTasksSnap = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule2_idle')
+    .where('automationRuleId', '==', 'rule_2_idle_lead_reengagement')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(idleTasksSnap.size === 1, 'Rule 2: Exactly 1 task created for idle lead', `tasks found=${idleTasksSnap.size}`);
+
+  const idleTaskData = idleTasksSnap.docs[0].data();
+  assert(idleTaskData.type === 'Call', 'Rule 2: Task type is Call', `type=${idleTaskData.type}`);
+  assert(idleTaskData.priority === 'Medium', 'Rule 2: Task priority is Medium', `priority=${idleTaskData.priority}`);
+  assert(idleTaskData.status === 'Pending', 'Rule 2: Task status is Pending', `status=${idleTaskData.status}`);
+  assert(idleTaskData.title.includes('Re-engage idle lead: Sri Murugan Traders'), 'Rule 2: Task title contains customer name and idle prompt', `title=${idleTaskData.title}`);
+
+  // 4. Verify active lead was NOT assigned a task
+  const activeTasksSnap = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule2_active')
+    .where('automationRuleId', '==', 'rule_2_idle_lead_reengagement')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(activeTasksSnap.size === 0, 'Rule 2: Active lead (< 7 days) gets no task', `tasks found=${activeTasksSnap.size}`);
+
+  // 5. Verify ordered customer was NOT assigned a task
+  const orderedTasksSnap = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule2_ordered')
+    .where('automationRuleId', '==', 'rule_2_idle_lead_reengagement')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(orderedTasksSnap.size === 0, 'Rule 2: Ordered / Old customer gets no task', `tasks found=${orderedTasksSnap.size}`);
+
+  // 6. Idempotency: re-run should NOT create duplicates
+  const stats2 = await executeRule2IdleLeadCheck(db as any, { forceRunNow: true });
+  console.log(`  Rule 2 (re-run) stats: evaluated=${stats2.evaluated}, created=${stats2.created}, skipped=${stats2.skipped}`);
+  const idleTasksSnap2 = await db.collection('tasks')
+    .where('customerId', '==', 'cust_rule2_idle')
+    .where('automationRuleId', '==', 'rule_2_idle_lead_reengagement')
+    .where('isDeleted', '==', false)
+    .get();
+  assert(idleTasksSnap2.size === 1, 'Rule 2: Still exactly 1 task after re-run (idempotency preserved)', `tasks found=${idleTasksSnap2.size}`);
+}
+
+// ============================================================================
 // TEST: Rule 3 — Cold Tagging
 // ============================================================================
 async function testRule3() {
@@ -448,6 +586,7 @@ async function main() {
 
     await seedData();
     await testRule1();
+    await testRule2();
     await testRule3();
     await testRule4();
     await testRule5();

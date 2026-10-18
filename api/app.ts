@@ -723,6 +723,25 @@ app.post('/api/automations/run-now', standardRateLimiter, requireAuth, async (re
           : `Created ${stats.created} reorder reminder task(s). Skipped ${stats.skippedFewerThanTwoOrders} customer(s) with fewer than 2 orders.`,
       };
 
+    } else if (ruleId === 'rule_2_idle_lead_reengagement') {
+      // Delegate to shared Rule 2 implementation
+      const { executeRule2IdleLeadCheck } = await import('../functions/src/rule_2_idle_lead.js');
+      const stats = await executeRule2IdleLeadCheck(db, {
+        forceRunNow: true,
+        dryRun: Boolean(dryRun),
+      });
+      result = {
+        success: true,
+        dryRun: Boolean(dryRun),
+        created: stats.created,
+        evaluated: stats.evaluated,
+        skipped: stats.skipped,
+        pendingQueued: stats.pendingQueued,
+        message: dryRun
+          ? `[Preview] Evaluated ${stats.evaluated} lead(s): would create ${stats.created} re-engagement call task(s) (Skipped ${stats.skipped} active or already scheduled).`
+          : `Created ${stats.created} idle lead re-engagement task(s) from ${stats.evaluated} evaluated leads (Skipped ${stats.skipped}).`,
+      };
+
     } else {
       res.status(400).json({ error: `Rule ${ruleId} does not support manual Run Now.` });
       return;
