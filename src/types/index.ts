@@ -380,6 +380,33 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export interface DeviceRegistration {
+  deviceId: string;
+  token: string;
+  memberEmail: string;
+  platform: 'android' | 'ios' | 'windows' | 'macos' | 'linux' | 'unknown';
+  browser: 'chrome' | 'edge' | 'firefox' | 'safari' | 'samsung' | 'opera' | 'unknown';
+  installedPwa: boolean;
+  permissionState: 'granted' | 'default' | 'denied';
+  userAgent?: string;
+  createdAt: string;
+  lastSeenAt: string;
+  lastSuccessAt?: string;
+  lastErrorCode?: string;
+  active: boolean;
+}
+
+export interface PushNotificationPayload {
+  title: string;
+  body: string;
+  icon?: string;
+  deepLink?: string;
+  tag?: string;
+  priority?: 'normal' | 'high' | 'critical';
+  collapseKey?: string;
+  data?: Record<string, string>;
+}
+
 export interface ActivityLog {
   id: string;
   entity: 'customer' | 'task' | 'order' | 'plan' | 'setting' | 'meta_ad' | 'festival_event';

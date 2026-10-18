@@ -1,6 +1,10 @@
 /**
  * Jaikrishna Industries — Firebase Cloud Messaging Background Service Worker
  * Handles background push notifications when the PWA is closed or in the background.
+ *
+ * NOTE: Firebase public client config is embedded here because Service Workers cannot
+ * access import.meta.env, and passing params through the SW registration URL is fragile.
+ * These are public Firebase identifiers (not server secrets).
  */
 
 /* global importScripts, firebase */
@@ -9,56 +13,61 @@
 importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-messaging-compat.js');
 
-// Parse Firebase configuration from URL query params (passed during client registration)
-const params = new URLSearchParams(location.search);
-
 const firebaseConfig = {
-  apiKey: params.get('apiKey') || '',
-  authDomain: params.get('authDomain') || '',
-  projectId: params.get('projectId') || '',
-  storageBucket: params.get('storageBucket') || '',
-  messagingSenderId: params.get('messagingSenderId') || '',
-  appId: params.get('appId') || '',
+  apiKey: "AIzaSyDjrggOuhTuHZQa-YJtfs2_md3Lz7ba5_4",
+  authDomain: "jaikrishna-industries.firebaseapp.com",
+  projectId: "jaikrishna-industries",
+  storageBucket: "jaikrishna-industries.firebasestorage.app",
+  messagingSenderId: "441381846190",
+  appId: "1:441381846190:web:9877871d5ee62c1d86013f"
 };
 
-if (firebaseConfig.apiKey && firebaseConfig.projectId) {
-  try {
-    firebase.initializeApp(firebaseConfig);
-    const messaging = firebase.messaging();
+try {
+  firebase.initializeApp(firebaseConfig);
+  const messaging = firebase.messaging();
 
-    messaging.onBackgroundMessage((payload) => {
-      console.log('[firebase-messaging-sw.js] Received background message:', payload);
+  messaging.onBackgroundMessage((payload) => {
+    console.log('[firebase-messaging-sw.js] Received background push payload:', payload);
 
-      const notificationTitle = payload.notification?.title || payload.data?.title || 'Jaikrishna Industries';
-      const notificationOptions = {
-        body: payload.notification?.body || payload.data?.body || 'New business update received.',
-        icon: '/icon.svg',
-        badge: '/icon.svg',
-        data: payload.data || {},
-        tag: payload.data?.tag || 'jaikrishna-alert',
-        renotify: true,
-      };
+    const title = payload.notification?.title || payload.data?.title || 'Jaikrishna Industries';
+    const body = payload.notification?.body || payload.data?.body || 'New business update received.';
+    const icon = payload.notification?.icon || payload.data?.icon || '/icon.svg';
+    const tag = payload.data?.tag || payload.data?.collapseKey || 'jaikrishna-general';
 
-      self.registration.showNotification(notificationTitle, notificationOptions);
-    });
-  } catch (err) {
-    console.error('[firebase-messaging-sw.js] Failed to initialize Firebase Messaging:', err);
-  }
+    // Build notification options - clean and without non-standard iOS action buttons
+    const notificationOptions = {
+      body,
+      icon,
+      badge: '/icon.svg',
+      data: payload.data || {},
+      tag,
+      renotify: true,
+      requireInteraction: payload.data?.priority === 'critical' || payload.data?.priority === 'high'
+    };
+
+    self.registration.showNotification(title, notificationOptions);
+  });
+} catch (err) {
+  console.error('[firebase-messaging-sw.js] Error initializing messaging in service worker:', err);
 }
 
-// Notification click event: opens the relevant view in the PWA
+// Notification click event: opens the relevant deep link in the PWA window
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const deepLink = event.notification.data?.deepLink || '/';
+  const deepLink = event.notification.data?.deepLink || event.notification.data?.url || '/';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // Check if there is already a window open
       for (const client of windowClients) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.navigate(deepLink);
+          if ('navigate' in client) {
+            client.navigate(deepLink);
+          }
           return client.focus();
         }
       }
+      // If no window is open, open a new window
       if (self.clients.openWindow) {
         return self.clients.openWindow(deepLink);
       }

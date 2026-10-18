@@ -16,18 +16,20 @@ export interface FirebaseClientConfig {
   appId?: string;
 }
 
+const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : (process.env as any || {});
+
 export const firebaseConfig: FirebaseClientConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  apiKey: env.VITE_FIREBASE_API_KEY || '',
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || '',
+  projectId: env.VITE_FIREBASE_PROJECT_ID || '',
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: env.VITE_FIREBASE_APP_ID || '',
 };
 
 export function getMissingFirebaseKeys(): string[] {
   // If explicitly connecting to emulators in dev mode, standard dummy project ID is acceptable
-  if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true') {
+  if (env.DEV && env.VITE_USE_EMULATORS === 'true') {
     return [];
   }
 
@@ -43,7 +45,7 @@ export function getMissingFirebaseKeys(): string[] {
 }
 
 export function isFirebaseConfigured(): boolean {
-  if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true') {
+  if (env.DEV && env.VITE_USE_EMULATORS === 'true') {
     return true;
   }
   return getMissingFirebaseKeys().length === 0;
@@ -56,11 +58,11 @@ let googleProvider: GoogleAuthProvider | null = null;
 
 if (isFirebaseConfigured()) {
   try {
-    const activeConfig = (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true')
+    const activeConfig = (env.DEV && env.VITE_USE_EMULATORS === 'true')
       ? {
           apiKey: 'fake-api-key-for-emulator',
           authDomain: 'localhost',
-          projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'jaikrishna-industries-dev',
+          projectId: env.VITE_FIREBASE_PROJECT_ID || 'jaikrishna-industries-dev',
           storageBucket: 'jaikrishna-industries-dev.appspot.com',
           messagingSenderId: '1234567890',
           appId: '1:1234567890:web:abcdef',
@@ -74,7 +76,7 @@ if (isFirebaseConfigured()) {
     googleProvider.setCustomParameters({ prompt: 'select_account' });
 
     // ONLY in development mode and ONLY if VITE_USE_EMULATORS === 'true'
-    if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true') {
+    if (env.DEV && env.VITE_USE_EMULATORS === 'true') {
       console.log('⚡ [Firebase Dev] Connecting to local Firebase Emulators (Auth :9099, Firestore :8080)...');
       connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
       connectFirestoreEmulator(db, '127.0.0.1', 8080);

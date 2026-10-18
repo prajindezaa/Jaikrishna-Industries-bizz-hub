@@ -7,13 +7,28 @@
       "maxDuration": 15
     }
   },
+  "headers": [
+    {
+      "source": "/(sw.js|firebase-messaging-sw.js|registerSW.js)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|sw\\.js|firebase-messaging-sw\\.js|registerSW\\.js|workbox-.*\\.js|manifest\\.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|ico|css|js|woff|woff2)$).*)",
       "destination": "/index.html"
     }
   ]

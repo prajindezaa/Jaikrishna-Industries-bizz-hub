@@ -20,9 +20,36 @@ import { SettingsView } from './views/SettingsView';
 import { AssistantView } from './views/AssistantView';
 import { AutomationRulesView } from './views/AutomationRulesView';
 
+import { setupForegroundMessageListener, getFcmToken, syncDeviceWithServer, getNotificationPermissionState } from './lib/fcm';
+
 const MainAppContent: React.FC = () => {
   const { isConfigured, user, loading } = useAuth();
   const [currentModule, setCurrentModule] = useState<ActiveModule>('dashboard');
+  const [foregroundToast, setForegroundToast] = useState<{ title: string; body: string } | null>(null);
+
+  React.useEffect(() => {
+    if (!user) return;
+
+    // 1. If permission is already granted, ensure token is refreshed and synced with server
+    if (getNotificationPermissionState() === 'granted') {
+      user.getIdToken().then(async (idToken) => {
+        const token = await getFcmToken();
+        await syncDeviceWithServer(idToken, token);
+      }).catch(console.error);
+    }
+
+    // 2. Setup foreground listener (suppress OS notification, show friendly in-app toast)
+    const unsubscribe = setupForegroundMessageListener((payload) => {
+      const title = payload.notification?.title || payload.data?.title || 'Jaikrishna Industries';
+      const body = payload.notification?.body || payload.data?.body || 'New alert received';
+      setForegroundToast({ title, body });
+      setTimeout(() => setForegroundToast(null), 5000);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [user]);
 
   // 1. Strict Firebase Configuration Guard
   if (!isConfigured) {
@@ -51,6 +78,21 @@ const MainAppContent: React.FC = () => {
   // 4. Authenticated & Authorized -> Render AppShell with active module
   return (
     <AppShell currentModule={currentModule} onNavigate={setCurrentModule}>
+      {foregroundToast && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm bg-stone-900 text-white p-4 rounded-xl shadow-2xl border border-amber-500/30 flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+          <div className="w-2 h-2 rounded-full bg-amber-400 mt-2 shrink-0 animate-ping" />
+          <div className="flex-1">
+            <h4 className="text-xs font-bold text-amber-300 font-display">{foregroundToast.title}</h4>
+            <p className="text-xs text-stone-300 mt-0.5">{foregroundToast.body}</p>
+          </div>
+          <button
+            onClick={() => setForegroundToast(null)}
+            className="text-stone-400 hover:text-white text-xs p-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {currentModule === 'dashboard' && <DashboardView onNavigate={setCurrentModule} />}
       {currentModule === 'customers' && <CustomersView />}
       {currentModule === 'tasks' && <TasksView />}

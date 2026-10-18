@@ -28,113 +28,12 @@ import { PWAInstallButton } from '../components/PWAInstallButton';
 import { requestNotificationPermission, showBrowserNotification } from '../lib/notifications';
 import { z } from 'zod';
 import { WhatsAppHubSettings } from '../types';
+import { PushOnboarding } from '../components/layout/PushOnboarding';
 
 export const SettingsView: React.FC = () => {
   const { user, member } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { settings, updateWhatsAppHubSettings } = useApp();
-
-  // Zod schema
-  const whatsappSettingsSchema = z.object({
-    frequencyWindowDays: z.number().min(1).max(90),
-    scope: z.enum(['anyMarketing', 'sameOfferOnly']),
-    allowedHours: z.object({
-      start: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
-      end: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/),
-    }),
-    guards: z.object({
-      frequencyEnabled: z.boolean(),
-      timingEnabled: z.boolean(),
-    }),
-  }).refine(data => data.allowedHours.start < data.allowedHours.end, {
-    message: "Start time must be before end time",
-    path: ["allowedHours"],
-  });
-
-    const [whatsappSettings, setWhatsappSettings] = useState<WhatsAppHubSettings | null>(settings?.whatsappHub || {
-    frequencyWindowDays: 7,
-    scope: 'anyMarketing',
-    allowedHours: { start: '09:00', end: '21:00' },
-    guards: { frequencyEnabled: true, timingEnabled: true },
-  });
-
-  const handleToggleGuard = async (guard: 'frequencyEnabled' | 'timingEnabled') => {
-    if (!whatsappSettings) return;
-    const updated = {
-      ...whatsappSettings,
-      guards: { ...whatsappSettings.guards, [guard]: !whatsappSettings.guards[guard] }
-    };
-    try {
-      whatsappSettingsSchema.parse(updated);
-      await updateWhatsAppHubSettings(updated);
-      setWhatsappSettings(updated);
-    } catch (err) {
-      console.error('Failed to update settings:', err);
-    }
-  };
-
-  const handleUpdateSettings = async () => {
-    if (!whatsappSettings) return;
-    try {
-      whatsappSettingsSchema.parse(whatsappSettings);
-      await updateWhatsAppHubSettings(whatsappSettings);
-    } catch (err) {
-      console.error('Invalid settings:', err);
-    }
-  };
-
-  return (
-    <div className="p-6 space-y-8">
-      <section className="bg-white p-6 rounded-xl border border-stone-200">
-        <h3 className="text-lg font-semibold text-stone-900 mb-4">WhatsApp Hub Preferences</h3>
-        {whatsappSettings && (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-stone-700">Frequency Window (Days)</label>
-              <input
-                type="number"
-                value={whatsappSettings.frequencyWindowDays}
-                onChange={(e) => setWhatsappSettings({...whatsappSettings, frequencyWindowDays: parseInt(e.target.value)})}
-                className="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-stone-700">Scope</label>
-              <select
-                value={whatsappSettings.scope}
-                onChange={(e) => setWhatsappSettings({...whatsappSettings, scope: e.target.value as 'anyMarketing' | 'sameOfferOnly'})}
-                className="mt-1 block w-full rounded-md border-stone-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-              >
-                <option value="anyMarketing">Any marketing message</option>
-                <option value="sameOfferOnly">Same offer only</option>
-              </select>
-            </div>
-            <div className="flex items-center space-x-4">
-              <button 
-                onClick={() => handleToggleGuard('frequencyEnabled')}
-                className={`px-4 py-2 rounded-md ${whatsappSettings.guards.frequencyEnabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
-              >
-                Frequency Guard: {whatsappSettings.guards.frequencyEnabled ? 'ON' : 'OFF'}
-              </button>
-              <button 
-                onClick={() => handleToggleGuard('timingEnabled')}
-                className={`px-4 py-2 rounded-md ${whatsappSettings.guards.timingEnabled ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
-              >
-                Timing Guard: {whatsappSettings.guards.timingEnabled ? 'ON' : 'OFF'}
-              </button>
-            </div>
-            <button
-              onClick={handleUpdateSettings}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-            >
-              Save Preferences
-            </button>
-          </div>
-        )}
-      </section>
-      {/* ... other settings sections */}
-    </div>
-  );
 
   const [diagnostics, setDiagnostics] = useState<{
     firebaseConfigured?: boolean;
@@ -257,6 +156,9 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Device Push Registration & Onboarding (Phase 4A) */}
+          <PushOnboarding />
 
           {/* Detailed Notification & Reminder Rules (Phase 4) */}
           <div className="bg-white rounded-xl border border-stone-200/80 p-6 shadow-xs space-y-4">

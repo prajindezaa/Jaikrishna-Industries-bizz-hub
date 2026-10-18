@@ -120,10 +120,20 @@ service cloud.firestore {
       allow read, write: if isAllowedMember();
     }
 
-    // In-app notifications
+    // In-app notifications: strictly allowlisted members only.
     match /notifications/{notificationId} {
       allow read, update: if isAllowedMember();
-      allow create: if isAllowedMember() || !isAuthenticated();
+      allow create: if isAllowedMember();
+      allow delete: if isAllowedMember();
+    }
+
+    // Members and registered push devices
+    match /members/{memberId} {
+      allow read, write: if isAllowedMember();
+
+      match /devices/{deviceId} {
+        allow read, write: if isAllowedMember();
+      }
     }
 
     // Saved search and filter presets

@@ -102,13 +102,229 @@ app.post('/api/verify-member', standardRateLimiter, async (req: Request, res: Re
   });
 });
 
-// 4. Test notification endpoint (Strict Auth Required)
-app.post('/api/test-notification', standardRateLimiter, requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const targetEmail = req.memberEmail || req.body?.email || INITIAL_ADMIN_EMAIL;
+// 4. Device Registration Endpoint (Strict Auth Required)
+app.post('/api/devices/register', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
+    const { deviceId, token, platform, browser, installedPwa, permissionState, userAgent } = req.body || {};
+
+    if (!deviceId) {
+      res.status(400).json({ error: 'Missing deviceId parameter' });
+      return;
+    }
+
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+    const now = new Date().toISOString();
+
+    // Invariant: Token belongs to only one active member device.
+    // If token exists on another member's device or another device record, remove it to prevent stale cross-user leaks.
+    if (token) {
+      const allDevicesWithToken = await db.collectionGroup('devices')
+        .where('token', '==', token)
+        .get();
+
+      const batch = db.batch();
+      let hadDuplicates = false;
+
+      allDevicesWithToken.forEach((docSnap) => {
+        // If it's a different member or a different deviceId, delete or deactivate the stale record
+        if (docSnap.ref.parent.parent?.id !== memberEmail || docSnap.id !== deviceId) {
+          batch.delete(docSnap.ref);
+          hadDuplicates = true;
+        }
+      });
+
+      if (hadDuplicates) {
+        await batch.commit();
+      }
+    }
+
+    const deviceDocRef = db.collection('members').doc(memberEmail).collection('devices').doc(deviceId);
+    const existingSnap = await deviceDocRef.get();
+
+    const deviceRecord = {
+      deviceId,
+      token: token || '',
+      memberEmail,
+      platform: platform || 'unknown',
+      browser: browser || 'unknown',
+      installedPwa: Boolean(installedPwa),
+      permissionState: permissionState || 'default',
+      userAgent: userAgent || '',
+      lastSeenAt: now,
+      active: true,
+      ...(existingSnap.exists ? {} : { createdAt: now }),
+    };
+
+    await deviceDocRef.set(deviceRecord, { merge: true });
+
+    res.json({
+      success: true,
+      message: 'Device registered successfully',
+      deviceId,
+      memberEmail,
+      hasToken: Boolean(token),
+    });
+  } catch (error: any) {
+    console.error('Failed to register device:', error);
+    res.status(500).json({ error: 'Failed to register device', details: error?.message });
+  }
+});
+
+// 4b. Device Unregister / Deactivate (e.g., on logout)
+app.post('/api/devices/unregister', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
+    const { deviceId } = req.body || {};
+
+    if (!deviceId) {
+      res.status(400).json({ error: 'Missing deviceId' });
+      return;
+    }
+
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+    const deviceRef = db.collection('members').doc(memberEmail).collection('devices').doc(deviceId);
+
+    await deviceRef.delete();
+    res.json({ success: true, message: 'Device unregistered successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to unregister device', details: error?.message });
+  }
+});
+
+// 4c. List Registered Devices for Member
+app.get('/api/devices/list', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+
+    const snapshot = await db.collection('members').doc(memberEmail).collection('devices').get();
+    const devices = snapshot.docs.map(doc => doc.data());
+
+    res.json({ success: true, devices });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to list devices', details: error?.message });
+  }
+});
+
+// 4d. Send Test Push Notification to Current Device or All Devices of Member
+app.post('/api/devices/test-push', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
+    const { deviceId, targetAll, title, body } = req.body || {};
+
+    const adminSdk = getFirebaseAdmin();
+    const db = adminSdk.firestore();
+    const messaging = adminSdk.messaging();
+
+    let devicesToSend: any[] = [];
+
+    if (deviceId && !targetAll) {
+      const snap = await db.collection('members').doc(memberEmail).collection('devices').doc(deviceId).get();
+      if (snap.exists && snap.data()?.token) {
+        devicesToSend.push(snap.data());
+      }
+    } else {
+      const snap = await db.collection('members').doc(memberEmail).collection('devices').where('active', '==', true).get();
+      devicesToSend = snap.docs.map(doc => doc.data()).filter(d => Boolean(d.token));
+    }
+
+    if (devicesToSend.length === 0) {
+      res.json({
+        success: false,
+        message: 'No registered devices with active FCM push tokens found. Please enable notifications on your device first.',
+        results: [],
+      });
+      return;
+    }
+
+    const results: Array<{ deviceId: string; success: boolean; error?: string }> = [];
+
+    for (const dev of devicesToSend) {
+      try {
+        await messaging.send({
+          token: dev.token,
+          notification: {
+            title: title || 'Test Push — Jaikrishna Industries',
+            body: body || 'Real Web Push is working seamlessly on this device!',
+          },
+          data: {
+            deepLink: '/settings',
+            tag: 'test-push',
+            timestamp: new Date().toISOString(),
+          },
+          webpush: {
+            headers: {
+              Urgency: 'high',
+            },
+            fcmOptions: {
+              link: '/settings',
+            },
+          },
+        });
+
+        results.push({ deviceId: dev.deviceId, success: true });
+
+        // Update lastSuccessAt
+        await db.collection('members').doc(memberEmail).collection('devices').doc(dev.deviceId).update({
+          lastSuccessAt: new Date().toISOString(),
+          lastErrorCode: FieldValue.delete(),
+        });
+      } catch (sendErr: any) {
+        const errorCode = sendErr?.code || 'unknown_error';
+        results.push({ deviceId: dev.deviceId, success: false, error: errorCode });
+
+        // If the token is invalid or expired (e.g. messaging/registration-token-not-registered), clean it up
+        if (errorCode === 'messaging/registration-token-not-registered' || errorCode === 'messaging/invalid-registration-token') {
+          await db.collection('members').doc(memberEmail).collection('devices').doc(dev.deviceId).update({
+            active: false,
+            lastErrorCode: errorCode,
+          });
+        }
+      }
+    }
+
+    const successfulCount = results.filter(r => r.success).length;
+
+    res.json({
+      success: successfulCount > 0,
+      total: devicesToSend.length,
+      successfulCount,
+      results,
+    });
+  } catch (err: any) {
+    console.error('Test push endpoint error:', err);
+    res.status(500).json({ error: 'Failed to send test push', details: err?.message });
+  }
+});
+
+// Legacy test-notification endpoint updated to write in-app test notification and trigger push
+app.post('/api/test-notification', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const targetEmail = (req.memberEmail || req.body?.email || INITIAL_ADMIN_EMAIL).toLowerCase().trim();
+  const adminSdk = getFirebaseAdmin();
+  const db = adminSdk.firestore();
+
+  // Write in-app notification
+  const notifRef = db.collection('notifications').doc();
+  const notifData = {
+    id: notifRef.id,
+    recipientEmail: targetEmail,
+    title: 'Test Notification',
+    body: 'In-app notification test dispatched successfully.',
+    type: 'system',
+    isRead: false,
+    createdAt: new Date().toISOString(),
+    deepLink: '/settings',
+  };
+  await notifRef.set(notifData);
+
   res.json({
     success: true,
-    message: `Test notification queued for authorized member: ${targetEmail}`,
-    timestamp: new Date().toISOString(),
+    message: `In-app test notification created for ${targetEmail}`,
+    notification: notifData,
   });
 });
 

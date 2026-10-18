@@ -270,6 +270,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    try {
+      if (user) {
+        const idToken = await user.getIdToken();
+        const { unregisterDeviceOnServer } = await import('../lib/fcm');
+        await unregisterDeviceOnServer(idToken);
+      }
+    } catch (e) {
+      console.warn('Could not unregister device during sign out:', e);
+    }
+
     if (auth) {
       await firebaseSignOut(auth);
     }
