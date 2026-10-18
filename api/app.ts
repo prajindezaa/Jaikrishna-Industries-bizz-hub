@@ -297,7 +297,8 @@ app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: Authen
 
   try {
     const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI();
+    // v2 SDK requires apiKey to be passed explicitly to the constructor
+    const ai = new GoogleGenAI({ apiKey });
 
     const systemPrompt = `You are the dedicated Read-Only Business Operations Assistant for Jaikrishna Industries, a premier pooja products manufacturer based in Salem, Tamil Nadu (manufacturing pure Bhimseni camphor, camphor tablets, premium agarbatti, Deepam lamp oil, pure sambrani cups, and traditional rose water).
     
@@ -324,7 +325,9 @@ ${context ? JSON.stringify(context, null, 2) : 'No live workspace context provid
     );
 
     const response: any = await Promise.race([apiPromise, timeoutPromise]);
-    const replyText = response.text || getSmartAssistantFallback(message, context);
+    // In @google/genai v2, .text is a getter on the response object
+    const replyText = (typeof response?.text === 'string' ? response.text : null)
+      || getSmartAssistantFallback(message, context);
 
     res.json({
       success: true,
@@ -342,6 +345,16 @@ ${context ? JSON.stringify(context, null, 2) : 'No live workspace context provid
       reply: `[System Notice: Gemini API was unavailable or timed out; answered via Offline Business Rules]\n\n${smartReply}`,
     });
   }
+});
+
+// Global JSON error handler — must be last. Ensures any unhandled Express error
+// returns JSON instead of Vercel's plain-text "A server error has occurred".
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('[Global Error Handler]', err);
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: err?.message || 'An unexpected error occurred.',
+  });
 });
 
 export default app;
