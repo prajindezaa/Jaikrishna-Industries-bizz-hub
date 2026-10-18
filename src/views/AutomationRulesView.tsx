@@ -879,15 +879,44 @@ export const AutomationRulesView: React.FC = () => {
                 </span>
               </div>
 
-              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs text-stone-600 space-y-1">
-                <div className="font-semibold text-stone-800 text-[11px]">Seasonality:</div>
-                <div className="text-[11px] text-stone-600">Integrates with festival_events to alert factory & ad managers</div>
+              {/* Health & Last Result Diagnostic */}
+              <div className="mt-4 p-3 bg-stone-50 rounded-xl border border-stone-100 text-xs space-y-1">
+                <div className="flex justify-between items-center text-[11px] font-semibold text-stone-700">
+                  <span>Last Run Result:</span>
+                  <span className={`font-mono ${rules['rule_6_festival_campaign_prep'].lastResult?.status === 'error' ? 'text-rose-600 font-bold' : 'text-emerald-700 font-medium'}`}>
+                    {rules['rule_6_festival_campaign_prep'].lastResult?.status || 'Never evaluated'}
+                  </span>
+                </div>
+                {rules['rule_6_festival_campaign_prep'].lastRunAt && (
+                  <div className="text-[10px] text-stone-500 font-mono">
+                    Last Run: {new Date(rules['rule_6_festival_campaign_prep'].lastRunAt!).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+                  </div>
+                )}
+                {rules['rule_6_festival_campaign_prep'].lastResult?.error && (
+                  <div className="text-[11px] text-rose-700 bg-rose-50 p-1.5 rounded border border-rose-200 font-mono">
+                    {rules['rule_6_festival_campaign_prep'].lastResult?.error}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between">
-              <span className="text-[11px] text-stone-500">Advance stock & ad prep</span>
-              <span className="text-[10px] text-stone-400">Zero duplicates</span>
+            <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleRunNow('rule_6_festival_campaign_prep', true)}
+                disabled={runningRuleId === 'rule_6_festival_campaign_prep'}
+                className="flex items-center gap-1 text-xs font-semibold text-stone-700 hover:text-stone-900 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-50 cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5 text-stone-500" />
+                <span>Preview</span>
+              </button>
+              <button
+                onClick={() => handleRunNow('rule_6_festival_campaign_prep', false)}
+                disabled={runningRuleId === 'rule_6_festival_campaign_prep' || !rules['rule_6_festival_campaign_prep'].enabled}
+                className="flex items-center gap-1.5 text-xs font-semibold text-white bg-[#881337] hover:bg-[#6b0f2b] disabled:bg-stone-300 px-3 py-1.5 rounded-lg shadow-xs cursor-pointer"
+              >
+                {runningRuleId === 'rule_6_festival_campaign_prep' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>Run Now</span>
+              </button>
             </div>
           </div>
         )}

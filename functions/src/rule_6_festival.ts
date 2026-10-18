@@ -66,17 +66,20 @@ export async function executeRule6FestivalCampaignPrep(
   const maxTargetDate = new Date(now.getTime() + lookaheadDays * 24 * 60 * 60 * 1000);
   const maxTargetDateStr = maxTargetDate.toISOString().slice(0, 10);
 
-  // 2. Query festivals in window [todayStr, maxTargetDateStr]
-  const festivalsSnap = await db
+  // 2. Query festivals in window [todayStr, maxTargetDateStr] without requiring a composite index
+  const allFestivalsSnap = await db
     .collection('festival_events')
-    .where('isDeleted', '==', false)
-    .where('date', '>=', todayStr)
-    .where('date', '<=', maxTargetDateStr)
-    .limit(20)
     .get();
 
-  stats.evaluated = festivalsSnap.size;
-  if (festivalsSnap.empty) {
+  const candidateFestivals = allFestivalsSnap.docs.filter((d) => {
+    const fest = d.data();
+    if (fest.isDeleted) return false;
+    const fDate = fest.date;
+    return fDate && fDate >= todayStr && fDate <= maxTargetDateStr;
+  });
+
+  stats.evaluated = candidateFestivals.length;
+  if (candidateFestivals.length === 0) {
     if (!dryRun) {
       await ruleRef.set({
         lastRunAt: new Date().toISOString(),
@@ -96,7 +99,7 @@ export async function executeRule6FestivalCampaignPrep(
 
   const rollingRunRef = db.collection('automation_runs').doc(`rule_6_festival_${todayStr}`);
 
-  for (const festDoc of festivalsSnap.docs) {
+  for (const festDoc of candidateFestivals) {
     const fest = festDoc.data();
     const eventId = festDoc.id;
     const eventName = fest.name || 'Upcoming Festival';
@@ -106,12 +109,11 @@ export async function executeRule6FestivalCampaignPrep(
     const existingTaskSnap = await db
       .collection('tasks')
       .where('automationRuleId', '==', 'rule_6_festival_campaign_prep')
-      .where('isDeleted', '==', false)
-      .limit(30)
       .get();
 
     const alreadyHasTask = existingTaskSnap.docs.some((d) => {
       const taskData = d.data();
+      if (taskData.isDeleted) return false;
       const status = taskData?.status;
       const isOpen = status === 'Pending' || status === 'In progress';
       const matchesEvent = taskData?.title?.includes(eventName) || taskData?.automationKey?.includes(eventId);
