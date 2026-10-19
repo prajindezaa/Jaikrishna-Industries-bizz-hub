@@ -60,12 +60,12 @@ if (isFirebaseConfigured()) {
   try {
     const activeConfig = (env.DEV && env.VITE_USE_EMULATORS === 'true')
       ? {
-          apiKey: firebaseConfig.apiKey || 'AIzaSyDjrggOuhTuHZQa-YJtfs2_md3Lz7ba5_4',
+          apiKey: firebaseConfig.apiKey || 'fake-api-key-for-emulator',
           authDomain: 'localhost',
-          projectId: env.VITE_FIREBASE_PROJECT_ID || 'jaikrishna-industries',
-          storageBucket: 'jaikrishna-industries.firebasestorage.app',
-          messagingSenderId: '441381846190',
-          appId: '1:441381846190:web:9877871d5ee62c1d86013f',
+          projectId: env.VITE_FIREBASE_PROJECT_ID || 'jaikrishna-industries-dev',
+          storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'jaikrishna-industries-dev.appspot.com',
+          messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '1234567890',
+          appId: env.VITE_FIREBASE_APP_ID || '1:1234567890:web:abcdef',
         }
       : (firebaseConfig as Record<string, string>);
 
