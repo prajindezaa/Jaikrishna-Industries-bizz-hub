@@ -17,7 +17,7 @@ import {
   KeyRound,
   RefreshCw,
 } from 'lucide-react';
-import { useAuth, INITIAL_ADMIN_EMAIL } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 
 export const LoginScreen: React.FC = () => {
@@ -31,7 +31,7 @@ export const LoginScreen: React.FC = () => {
   } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
 
-  const [email, setEmail] = useState(INITIAL_ADMIN_EMAIL);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'google' | 'email_login' | 'email_register'>('google');
   const [submitting, setSubmitting] = useState(false);
@@ -246,6 +246,8 @@ export const LoginScreen: React.FC = () => {
                   type="button"
                   onClick={() => {
                     clearError();
+                    setEmail('');
+                    setPassword('');
                     setMode('email_login');
                   }}
                   className="py-2 px-3 text-xs font-semibold text-stone-700 bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-lg text-center transition-colors"
@@ -256,6 +258,8 @@ export const LoginScreen: React.FC = () => {
                   type="button"
                   onClick={() => {
                     clearError();
+                    setEmail('');
+                    setPassword('');
                     setMode('email_register');
                   }}
                   className="py-2 px-3 text-xs font-semibold text-[#881337] bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg text-center transition-colors"
@@ -289,12 +293,12 @@ export const LoginScreen: React.FC = () => {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="prajindezaa142@gmail.com"
+                    placeholder="name@company.com"
                     className="w-full pl-9 pr-3 py-2 text-xs text-stone-900 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-600/30 focus:border-amber-600"
                   />
                 </div>
                 <span className="text-[10px] text-stone-500 mt-1 block">
-                  Must be one of the 3 authorized Jaikrishna team member emails.
+                  Must be an authorized Jaikrishna team member email.
                 </span>
               </div>
 
@@ -343,6 +347,8 @@ export const LoginScreen: React.FC = () => {
                     type="button"
                     onClick={() => {
                       clearError();
+                      setEmail('');
+                      setPassword('');
                       setMode('email_register');
                     }}
                     className="text-[11px] text-[#881337] hover:underline"
@@ -354,6 +360,8 @@ export const LoginScreen: React.FC = () => {
                     type="button"
                     onClick={() => {
                       clearError();
+                      setEmail('');
+                      setPassword('');
                       setMode('email_login');
                     }}
                     className="text-[11px] text-stone-600 hover:underline"
@@ -364,12 +372,6 @@ export const LoginScreen: React.FC = () => {
               </div>
             </form>
           )}
-
-          <div className="mt-8 pt-6 border-t border-stone-100 text-center">
-            <span className="text-[11px] text-stone-500">
-              Initial Admin: <span className="font-mono text-stone-700 font-semibold">{INITIAL_ADMIN_EMAIL}</span>
-            </span>
-          </div>
         </div>
       </div>
     </div>
