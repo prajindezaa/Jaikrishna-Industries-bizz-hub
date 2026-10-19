@@ -21,6 +21,7 @@ import {
   AlertCircle,
   Truck,
   CreditCard,
+  Layers,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -69,7 +70,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .catch(() => {});
   }, []);
 
-  const { customers, tasks, orders, metaAds, festivalEvents, getDerivedAdMetrics } = useApp();
+  const { customers, tasks, orders, metaAds, festivalEvents, customerGroups, getDerivedAdMetrics } = useApp();
 
   const totalRevenue = orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
   const totalLeads = customers.length;
@@ -203,9 +204,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     done: stats.done,
     missed: stats.missed,
   }));
-  if (taskPerformanceData.length === 0) {
-    taskPerformanceData = [{ member: member?.name || 'Admin', done: 0, missed: 0 }];
-  }
+  // 5. Customer Groups distribution & performance
+  const activeCustomerGroups = customerGroups.filter((g) => g.isActive && !g.isDeleted);
+  const groupStats = activeCustomerGroups.map((g) => {
+    const groupCustomers = customers.filter((c) => c.groupId === g.id && !c.isDeleted);
+    const groupOrders = orders.filter((o) => o.customerGroupId === g.id && !o.isDeleted);
+    const groupRevenue = groupOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+    return {
+      id: g.id,
+      name: g.name,
+      nameTa: g.nameTa,
+      color: g.color || '#881337',
+      customerCount: groupCustomers.length,
+      orderCount: groupOrders.length,
+      revenue: groupRevenue,
+    };
+  });
+  const ungroupedCount = customers.filter((c) => !c.groupId && !c.isDeleted).length;
 
   return (
     <div className="space-y-6">
@@ -397,6 +412,85 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Customer Groups Segment Hub Strip */}
+      {activeCustomerGroups.length > 0 && (
+        <div className="bg-white rounded-2xl border border-stone-200/90 p-5 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-stone-100">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-amber-700 text-white flex items-center justify-center shadow-xs">
+                <Layers className="w-4 h-4 text-amber-200" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-stone-900 font-display">
+                    Customer Groups &amp; Segments
+                  </h3>
+                  <span className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200/60 px-2 py-0.5 rounded-full font-mono">
+                    {activeCustomerGroups.length} Active Groups
+                  </span>
+                </div>
+                <p className="text-xs text-stone-500">
+                  Targeted business tiers, wholesale buyers, retailers, and temple trusts
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => onNavigate('customers')}
+              className="text-xs font-bold text-amber-900 hover:text-amber-950 flex items-center gap-1 self-start sm:self-auto py-1 px-2.5 rounded-lg hover:bg-stone-50 border border-stone-200 transition-colors"
+            >
+              <span>View Customers by Group</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+            {groupStats.slice(0, 4).map((g) => (
+              <div
+                key={g.id}
+                className="p-3 bg-stone-50/80 rounded-xl border border-stone-200/70 hover:border-stone-300 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: g.color }}
+                    />
+                    <span className="text-xs font-bold text-stone-800 truncate" title={g.name}>
+                      {g.name}
+                    </span>
+                  </div>
+                  {g.nameTa && (
+                    <span className="text-[10px] text-stone-400 shrink-0 font-medium">{g.nameTa}</span>
+                  )}
+                </div>
+                <div className="text-xl font-bold font-mono text-stone-900 mt-1.5">
+                  {g.customerCount} <span className="text-[11px] font-normal text-stone-500">customers</span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-stone-500 mt-1 pt-1 border-t border-stone-200/60">
+                  <span>{g.orderCount} orders</span>
+                  <span className="font-semibold text-stone-700">₹{g.revenue.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {ungroupedCount > 0 && (
+            <div className="pt-1 flex items-center justify-between text-xs text-stone-500 px-1">
+              <span>
+                <strong className="text-stone-700">{ungroupedCount}</strong> customer(s) are currently ungrouped.
+              </span>
+              <button
+                onClick={() => onNavigate('customers')}
+                className="text-[11px] text-[#881337] font-semibold hover:underline"
+              >
+                Assign Groups →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Meta Ads Hub Executive Command Strip */}
       <div className="bg-gradient-to-r from-amber-500/10 via-amber-50/50 to-stone-50 rounded-2xl border border-amber-300/80 p-5 shadow-2xs space-y-4">

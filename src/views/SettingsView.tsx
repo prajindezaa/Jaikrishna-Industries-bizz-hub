@@ -29,6 +29,7 @@ import { requestNotificationPermission, showBrowserNotification } from '../lib/n
 import { z } from 'zod';
 import { WhatsAppHubSettings } from '../types';
 import { PushOnboarding } from '../components/layout/PushOnboarding';
+import { CustomerGroupSettingsSection } from '../components/settings/CustomerGroupSettingsSection';
 import { db } from '../lib/firebase';
 
 export const SettingsView: React.FC = () => {
@@ -241,6 +242,9 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Customer Groups & Categories Management (Phase 1) */}
+          <CustomerGroupSettingsSection />
 
           {/* Device Push Registration & Onboarding (Phase 4A) */}
           <PushOnboarding />

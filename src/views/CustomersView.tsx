@@ -27,6 +27,10 @@ import {
   Loader2,
   Database,
   Edit3,
+  Layers,
+  GitMerge,
+  AlertTriangle,
+  FolderOpen,
 } from 'lucide-react';
 import { Customer, CustomerType, CustomerStatus, LeadStage, LeadSource, OutreachLog } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -37,6 +41,9 @@ import { CustomerImportModal } from '../components/CustomerImportModal';
 import { CustomerDetailDrawer } from '../components/CustomerDetailDrawer';
 import { EditCustomerModal } from '../components/EditCustomerModal';
 import { LogOutcomeModal } from '../components/LogOutcomeModal';
+import { CustomerGroupSelect } from '../components/customers/CustomerGroupSelect';
+import { CustomerGroupBadge } from '../components/customers/CustomerGroupBadge';
+import { GroupOverviewCards } from '../components/customers/GroupOverviewCards';
 import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
 import { useAuth } from '../context/AuthContext';
 
@@ -50,6 +57,9 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   const {
     customers,
     loadingCustomers,
+    customerGroups,
+    loadingCustomerGroups,
+    groupCounters,
     addCustomer,
     updateCustomer,
     softDeleteCustomer,
@@ -65,17 +75,41 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
     plans,
   } = useApp();
 
+  // Remember last selected group per member via localStorage
+  const memberStorageKey = `jki_last_selected_group_${member?.email || 'default'}`;
+  const [selectedGroupId, setSelectedGroupId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(memberStorageKey) || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+
+  const handleGroupTabChange = (newGroupId: string) => {
+    setSelectedGroupId(newGroupId);
+    try {
+      localStorage.setItem(memberStorageKey, newGroupId);
+    } catch {
+      // ignore
+    }
+  };
+
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'All' | CustomerStatus>('All');
   const [selectedCity, setSelectedCity] = useState<string>('All');
   const [selectedStage, setSelectedStage] = useState<string>('All');
-  const [viewMode, setViewMode] = useState<'table' | 'grouped'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'grouped' | 'overview'>('table');
 
   // Modals & Drawers
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+
+  // Bulk Move Modal State
+  const [showBulkMoveModal, setShowBulkMoveModal] = useState(false);
+  const [bulkMoveTargetGroupId, setBulkMoveTargetGroupId] = useState<string>('');
+  const [bulkMoving, setBulkMoving] = useState(false);
 
   // Filter Presets Modal
   const [showSaveFilterModal, setShowSaveFilterModal] = useState(false);
@@ -90,18 +124,26 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   // Bulk Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Form State for Adding Single Customer
+  // Form State for Adding Single Customer (Group-wise Add)
   const [companyName, setCompanyName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [rawPhone, setRawPhone] = useState('');
   const [placeCity, setPlaceCity] = useState('Salem');
-  const [customerType, setCustomerType] = useState<CustomerType>('Distributor');
+  const [formGroupId, setFormGroupId] = useState<string | null>(null);
   const [status, setStatus] = useState<CustomerStatus>('New customer');
   const [leadSource, setLeadSource] = useState<LeadSource>('Meta Ads');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Duplicate Phone Detection State (4 Choices Modal)
+  const [duplicateConflict, setDuplicateConflict] = useState<{
+    existingCustomer: Customer;
+    normalizedPhone: string;
+    pendingData: any;
+  } | null>(null);
+  const [duplicateReason, setDuplicateReason] = useState('');
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -110,7 +152,61 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
 
   const cities = Array.from(new Set(customers.map((c) => c.place?.city).filter(Boolean)));
 
-  const handleAddCustomer = async (e: React.FormEvent) => {
+  // Global Keyboard Shortcut: 'N' to open Add Customer modal in currently selected group
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing inside an input, textarea or select, or has a modifier pressed
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && !showAddModal && !editingCustomer && !showImportModal) {
+          e.preventDefault();
+          handleOpenAddModal();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAddModal, editingCustomer, showImportModal, selectedGroupId, customerGroups]);
+
+  const executeAddCustomer = async (custData: any, addAnother: boolean = false) => {
+    try {
+      setIsSubmitting(true);
+      await addCustomer(custData);
+      showToast(`Customer "${custData.companyName}" successfully saved!`);
+
+      if (addAnother) {
+        setCompanyName('');
+        setContactPerson('');
+        setRawPhone('');
+        setNotes('');
+        setDuplicateConflict(null);
+        setFormError(null);
+      } else {
+        setShowAddModal(false);
+        setCompanyName('');
+        setContactPerson('');
+        setRawPhone('');
+        setNotes('');
+        setDuplicateConflict(null);
+        setFormError(null);
+      }
+    } catch (err: any) {
+      setFormError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAddCustomer = async (e: React.FormEvent, addAnother: boolean = false) => {
     e.preventDefault();
     setFormError(null);
     if (!companyName.trim() || !rawPhone.trim()) {
@@ -118,43 +214,215 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
       return;
     }
 
+    const normalized = normalizePhone(rawPhone.trim());
+    if (!normalized) {
+      setFormError('Invalid phone number format. Please check the digits.');
+      return;
+    }
+
+    // Check if target group is archived
+    if (formGroupId) {
+      const grp = customerGroups.find((g) => g.id === formGroupId);
+      if (grp && !grp.isActive) {
+        setFormError(`Group "${grp.name}" is archived. New customers cannot be assigned to archived groups.`);
+        return;
+      }
+    }
+
+    const resolvedGroup = formGroupId ? customerGroups.find((g) => g.id === formGroupId) : null;
+    const now = new Date().toISOString();
+
+    const pendingData = {
+      companyName: companyName.trim(),
+      contactPerson: contactPerson.trim() || companyName.trim(),
+      phone: normalized,
+      whatsapp: normalized,
+      place: { area: '', city: placeCity || 'Salem', district: placeCity || 'Salem', state: 'Tamil Nadu' },
+      groupId: formGroupId || null,
+      groupName: resolvedGroup ? resolvedGroup.name : (formGroupId ? 'Unknown Group' : 'Ungrouped'),
+      groupAssignedAt: formGroupId ? now : null,
+      groupAssignedBy: formGroupId ? (member?.email || 'admin') : null,
+      previousGroupId: null,
+      customerType: (resolvedGroup?.name || 'Retailer') as CustomerType,
+      status,
+      source: leadSource,
+      leadStage: 'New' as LeadStage,
+      assignedTo: member?.email || 'prajindezaa142@gmail.com',
+      tags: ['New Inbound'],
+      notes: notes.trim(),
+    };
+
+    // Duplicate check on phone across ALL groups
+    const existing = customers.find((c) => c.phone === normalized && !c.isDeleted);
+    if (existing) {
+      setDuplicateConflict({
+        existingCustomer: existing,
+        normalizedPhone: normalized,
+        pendingData,
+      });
+      return;
+    }
+
+    await executeAddCustomer(pendingData, addAnother);
+  };
+
+  // Duplicate resolution actions (4 Choices: Skip, Move, Update, Save Anyway / Open)
+  const handleDuplicateSkip = () => {
+    setDuplicateConflict(null);
+    showToast('Add skipped. Existing customer preserved.');
+  };
+
+  const handleDuplicateMove = async () => {
+    if (!duplicateConflict) return;
     try {
       setIsSubmitting(true);
-      await addCustomer({
-        companyName: companyName.trim(),
-        contactPerson: contactPerson.trim() || companyName.trim(),
-        phone: rawPhone.trim(),
-        whatsapp: rawPhone.trim(),
-        place: { area: '', city: placeCity || 'Salem', district: placeCity || 'Salem', state: 'Tamil Nadu' },
-        customerType,
-        status,
-        source: leadSource,
-        leadStage: 'New',
-        assignedTo: member?.email || 'prajindezaa142@gmail.com',
-        tags: ['New Inbound'],
-        notes: notes.trim(),
+      const { existingCustomer, pendingData } = duplicateConflict;
+      const targetGrp = formGroupId ? customerGroups.find((g) => g.id === formGroupId) : null;
+      await updateCustomer(existingCustomer.id, {
+        groupId: formGroupId || null,
+        groupName: targetGrp ? targetGrp.name : 'Ungrouped',
+        groupAssignedAt: new Date().toISOString(),
+        groupAssignedBy: member?.email || 'admin',
+        previousGroupId: existingCustomer.groupId || null,
+        lastWriteSource: 'manual_edit',
       });
-
+      showToast(`Moved "${existingCustomer.companyName}" to "${targetGrp?.name || 'Ungrouped'}".`);
+      setDuplicateConflict(null);
       setShowAddModal(false);
-      setCompanyName('');
-      setContactPerson('');
-      setRawPhone('');
-      setNotes('');
-      showToast('Customer lead successfully saved to Firestore!');
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      alert(`Error moving customer: ${err?.message || err}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleImportSuccess = async (importedList: Customer[]) => {
+  const handleDuplicateUpdate = async (overwrite: boolean = false) => {
+    if (!duplicateConflict) return;
     try {
-      const res = await importCustomersBatch(importedList);
-      showToast(`Imported ${res.imported} new leads, updated ${res.updated} existing!`);
-    } catch (err) {
-      alert(`Import error: ${err instanceof Error ? err.message : String(err)}`);
+      setIsSubmitting(true);
+      const { existingCustomer, pendingData } = duplicateConflict;
+      const updates: Partial<Customer> = {};
+
+      if (overwrite) {
+        updates.companyName = pendingData.companyName;
+        updates.contactPerson = pendingData.contactPerson;
+        updates.place = pendingData.place;
+        if (pendingData.notes) {
+          updates.notes = existingCustomer.notes
+            ? `${existingCustomer.notes}\n[Update]: ${pendingData.notes}`
+            : pendingData.notes;
+        }
+      } else {
+        // Fill empty fields only
+        if (!existingCustomer.contactPerson && pendingData.contactPerson) {
+          updates.contactPerson = pendingData.contactPerson;
+        }
+        if (!existingCustomer.place?.city && pendingData.place?.city) {
+          updates.place = pendingData.place;
+        }
+        if (pendingData.notes) {
+          updates.notes = existingCustomer.notes
+            ? `${existingCustomer.notes}\n[Appended Note]: ${pendingData.notes}`
+            : pendingData.notes;
+        }
+      }
+
+      await updateCustomer(existingCustomer.id, updates);
+      showToast(`Updated existing customer "${existingCustomer.companyName}".`);
+      setDuplicateConflict(null);
+      setShowAddModal(false);
+    } catch (err: any) {
+      alert(`Error updating customer: ${err?.message || err}`);
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const handleDuplicateSaveAnyway = async () => {
+    if (!duplicateConflict) return;
+    if (!duplicateReason.trim()) {
+      alert('Please provide a reason to create duplicate phone record.');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      const { pendingData } = duplicateConflict;
+      const finalData = {
+        ...pendingData,
+        tags: [...(pendingData.tags || []), 'Duplicate-Phone-Allowed'],
+        notes: pendingData.notes
+          ? `${pendingData.notes}\n[Duplicate Allowed Reason]: ${duplicateReason.trim()}`
+          : `[Duplicate Allowed Reason]: ${duplicateReason.trim()}`,
+      };
+      await addCustomer(finalData);
+      showToast(`Saved duplicate customer with verified override.`);
+      setDuplicateConflict(null);
+      setDuplicateReason('');
+      setShowAddModal(false);
+    } catch (err: any) {
+      alert(`Failed to save duplicate: ${err?.message || err}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDuplicateOpenCustomer = () => {
+    if (!duplicateConflict) return;
+    const cust = duplicateConflict.existingCustomer;
+    setDuplicateConflict(null);
+    setShowAddModal(false);
+    setActiveCustomer(cust);
+  };
+
+  // Bulk Move to Group
+  const handleExecuteBulkMove = async () => {
+    if (selectedIds.size === 0) return;
+    const targetGrp = customerGroups.find((g) => g.id === bulkMoveTargetGroupId);
+    const targetName = targetGrp ? targetGrp.name : (bulkMoveTargetGroupId === '__ungrouped__' ? 'Ungrouped' : null);
+    if (!targetName && bulkMoveTargetGroupId !== '__ungrouped__') {
+      alert('Please select a target group.');
+      return;
+    }
+
+    try {
+      setBulkMoving(true);
+      const resolvedTargetId = bulkMoveTargetGroupId === '__ungrouped__' ? null : bulkMoveTargetGroupId;
+      const now = new Date().toISOString();
+
+      for (const id of Array.from(selectedIds)) {
+        const cust = customers.find((c) => c.id === id);
+        if (!cust) continue;
+        await updateCustomer(id, {
+          groupId: resolvedTargetId,
+          groupName: targetName || 'Ungrouped',
+          groupAssignedAt: now,
+          groupAssignedBy: member?.email || 'admin',
+          previousGroupId: cust.groupId || null,
+          lastWriteSource: 'manual_edit',
+        });
+      }
+
+      showToast(`Moved ${selectedIds.size} customer(s) to ${targetName}.`);
+      setSelectedIds(new Set());
+      setShowBulkMoveModal(false);
+      setBulkMoveTargetGroupId('');
+    } catch (err: any) {
+      alert(`Failed to bulk move: ${err?.message || err}`);
+    } finally {
+      setBulkMoving(false);
+    }
+  };
+
+  const handleImportSuccess = (res: {
+    imported: number;
+    updated: number;
+    moved: number;
+    skipped: number;
+    batchId?: string;
+  }) => {
+    showToast(
+      `Batch import completed: ${res.imported} new, ${res.updated} updated, ${res.moved} moved, ${res.skipped} skipped.`
+    );
   };
 
   const handleSaveOutreachOutcome = async (log: OutreachLog, updatedNextFollowUp?: string) => {
@@ -223,6 +491,23 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
     showToast(`Applied preset: ${preset.name}`);
   };
 
+  // Helper to open Add modal with active group preselected
+  const handleOpenAddModal = (overrideGroupId?: string | null) => {
+    let targetGrp: string | null = null;
+    if (overrideGroupId !== undefined) {
+      targetGrp = overrideGroupId;
+    } else if (selectedGroupId !== 'all' && selectedGroupId !== 'ungrouped') {
+      targetGrp = selectedGroupId;
+    } else {
+      const defaultGroup = customerGroups.find((g) => g.isDefault && !g.isDeleted && g.isActive);
+      targetGrp = defaultGroup ? defaultGroup.id : (customerGroups[0]?.id || null);
+    }
+    setFormGroupId(targetGrp);
+    setFormError(null);
+    setDuplicateConflict(null);
+    setShowAddModal(true);
+  };
+
   const filteredCustomers = customers.filter((c) => {
     const matchesSearch =
       !search ||
@@ -235,7 +520,12 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
     const matchesCity = selectedCity === 'All' || c.place?.city === selectedCity;
     const matchesStage = selectedStage === 'All' || c.leadStage === selectedStage;
 
-    return matchesSearch && matchesStatus && matchesCity && matchesStage;
+    // Group Filtering: 'all' shows all, 'ungrouped' shows customers with no groupId, otherwise matches c.groupId
+    const matchesGroup =
+      selectedGroupId === 'all' ||
+      (selectedGroupId === 'ungrouped' ? !c.groupId : c.groupId === selectedGroupId);
+
+    return matchesSearch && matchesStatus && matchesCity && matchesStage && matchesGroup;
   });
 
   return (
@@ -304,12 +594,118 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
 
           {/* Add Customer Button */}
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => handleOpenAddModal()}
             className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] flex items-center gap-1.5 shadow-sm transition-colors"
+            title="Add Customer in current group (Shortcut: press N)"
           >
             <Plus className="w-4 h-4" />
-            New Customer
+            <span>New Customer</span>
+            <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 text-[10px] bg-white/20 rounded font-mono text-white/90">
+              N
+            </kbd>
           </button>
+        </div>
+      </div>
+
+      {/* Customer Groups Tabs Bar (Desktop + Mobile) with Live Counters */}
+      <div className="bg-white p-2.5 rounded-xl border border-stone-200 shadow-xs space-y-2">
+        <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 text-xs">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* All Customers Tab */}
+            <button
+              onClick={() => handleGroupTabChange('all')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-2 transition-colors ${
+                selectedGroupId === 'all'
+                  ? 'bg-[#881337] text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>All Customers</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  selectedGroupId === 'all' ? 'bg-white/20 text-white' : 'bg-stone-200 text-stone-700'
+                }`}
+              >
+                {customers.length}
+              </span>
+            </button>
+
+            {/* Ungrouped Tab */}
+            <button
+              onClick={() => handleGroupTabChange('ungrouped')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-2 transition-colors ${
+                selectedGroupId === 'ungrouped'
+                  ? 'bg-stone-800 text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-stone-400" />
+              <span>Ungrouped</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  selectedGroupId === 'ungrouped' ? 'bg-white/20 text-white' : 'bg-stone-200 text-stone-700'
+                }`}
+              >
+                {customers.filter((c) => !c.groupId).length}
+              </span>
+            </button>
+
+            {/* Individual Group Tabs */}
+            {customerGroups
+              .filter((g) => g.isActive && !g.isDeleted)
+              .map((grp) => {
+                const count = customers.filter((c) => c.groupId === grp.id).length;
+                const isSelected = selectedGroupId === grp.id;
+                return (
+                  <button
+                    key={grp.id}
+                    onClick={() => handleGroupTabChange(grp.id)}
+                    className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-2 shrink-0 transition-colors ${
+                      isSelected
+                        ? 'text-white shadow-xs'
+                        : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+                    }`}
+                    style={isSelected ? { backgroundColor: grp.color } : {}}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full inline-block shrink-0"
+                      style={{ backgroundColor: isSelected ? '#ffffff' : grp.color }}
+                    />
+                    <span>{grp.name}</span>
+                    {grp.nameTa && (
+                      <span
+                        className={`text-[10px] hidden md:inline font-normal ${
+                          isSelected ? 'text-white/80' : 'text-stone-700'
+                        }`}
+                      >
+                        ({grp.nameTa})
+                      </span>
+                    )}
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                        isSelected ? 'bg-white/25 text-white' : 'bg-stone-200 text-stone-700'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+
+          {/* Quick inline shortcut to add customer directly into active group */}
+          {selectedGroupId !== 'all' && selectedGroupId !== 'ungrouped' && (
+            <button
+              onClick={() => handleOpenAddModal(selectedGroupId)}
+              className="px-2.5 py-1 text-xs font-bold text-[#881337] bg-rose-50 hover:bg-rose-100 rounded-lg flex items-center gap-1 shrink-0 border border-[#881337]/20 transition-colors"
+              title="Add a new customer straight into this group"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Add to</span>{' '}
+              {customerGroups.find((g) => g.id === selectedGroupId)?.name}
+            </button>
+          )}
         </div>
       </div>
 
@@ -419,7 +815,7 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
             Save Preset
           </button>
 
-          {/* Table / Grouped Toggle */}
+          {/* Table / Grouped / Overview Toggle */}
           <div className="flex items-center border border-stone-200 rounded-lg p-0.5 bg-stone-100">
             <button
               onClick={() => setViewMode('table')}
@@ -437,6 +833,15 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
             >
               By City
             </button>
+            <button
+              onClick={() => setViewMode('overview')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1 transition-colors ${
+                viewMode === 'overview' ? 'bg-[#881337] shadow-xs text-white' : 'text-stone-700 hover:text-stone-800'
+              }`}
+            >
+              <Layers className="w-3 h-3" />
+              <span>Overview</span>
+            </button>
           </div>
         </div>
       </div>
@@ -451,6 +856,13 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowBulkMoveModal(true)}
+              className="px-3 py-1.5 bg-[#881337] text-white font-semibold rounded-md hover:bg-[#70102e] flex items-center gap-1.5 shadow-xs transition-colors"
+            >
+              <GitMerge className="w-3.5 h-3.5" />
+              Move to Group...
+            </button>
             <button
               onClick={handleBulkTrash}
               className="px-3 py-1.5 bg-rose-600 text-white font-semibold rounded-md hover:bg-rose-700 flex items-center gap-1.5 shadow-xs transition-colors"
@@ -527,7 +939,7 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                   <th className="py-3 px-3">Company / Shop</th>
                   <th className="py-3 px-3">Contact & Phone</th>
                   <th className="py-3 px-3">Location</th>
-                  <th className="py-3 px-3">Type</th>
+                  <th className="py-3 px-3">Group</th>
                   <th className="py-3 px-3">Status</th>
                   <th className="py-3 px-3">Stage</th>
                   <th className="py-3 px-3">Follow-up</th>
@@ -543,6 +955,7 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                     cust.whatsapp || cust.phone,
                     `Vanakkam ${cust.contactPerson || cust.companyName}, greetings from Jaikrishna Industries (Salem).`
                   );
+                  const custGroup = cust.groupId ? customerGroups.find((g) => g.id === cust.groupId) : null;
 
                   return (
                     <tr
@@ -606,11 +1019,13 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                         )}
                       </td>
 
-                      {/* Customer Type */}
+                      {/* Customer Group (replaces legacy customerType) */}
                       <td className="py-3 px-3">
-                        <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold bg-stone-100 text-stone-700">
-                          {cust.customerType}
-                        </span>
+                        <CustomerGroupBadge
+                          group={custGroup}
+                          groupId={cust.groupId}
+                          groupName={cust.groupName}
+                        />
                       </td>
 
                       {/* Status */}
@@ -724,6 +1139,18 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
             </table>
           </div>
         </div>
+      ) : viewMode === 'overview' ? (
+        /* Overview Mode: Group Cards */
+        <GroupOverviewCards
+          groups={customerGroups.filter((g) => !g.isDeleted)}
+          customers={customers}
+          orders={orders}
+          tasks={tasks}
+          onSelectGroup={(gid) => {
+            handleGroupTabChange(gid);
+            setViewMode('table');
+          }}
+        />
       ) : (
         /* Grouped By City View */
         <div className="space-y-6">
@@ -744,78 +1171,88 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                 </div>
 
                 <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {cityCustomers.map((cust) => (
-                    <div
-                      key={cust.id}
-                      onClick={() => setActiveCustomer(cust)}
-                      className="p-3.5 rounded-xl border border-stone-200 bg-stone-50/50 hover:bg-amber-50/40 hover:border-amber-200 transition-all cursor-pointer flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-2">
-                          <h4 className="font-bold text-stone-900 text-xs">{cust.companyName}</h4>
-                          <span
-                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                              cust.status === 'New customer'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-emerald-100 text-emerald-800'
-                            }`}
-                          >
-                            {cust.status}
-                          </span>
+                  {cityCustomers.map((cust) => {
+                    const custGroup = cust.groupId ? customerGroups.find((g) => g.id === cust.groupId) : null;
+                    return (
+                      <div
+                        key={cust.id}
+                        onClick={() => setActiveCustomer(cust)}
+                        className="p-3.5 rounded-xl border border-stone-200 bg-stone-50/50 hover:bg-amber-50/40 hover:border-amber-200 transition-all cursor-pointer flex flex-col justify-between"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="font-bold text-stone-900 text-xs">{cust.companyName}</h4>
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                                cust.status === 'New customer'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {cust.status}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-stone-700 mt-1">
+                            {cust.contactPerson} · {formatPhoneDisplay(cust.phone)}
+                          </p>
+                          <div className="mt-2">
+                            <CustomerGroupBadge
+                              group={custGroup}
+                              groupId={cust.groupId}
+                              groupName={cust.groupName}
+                            />
+                          </div>
                         </div>
-                        <p className="text-[11px] text-stone-700 mt-1">
-                          {cust.contactPerson} · {formatPhoneDisplay(cust.phone)}
-                        </p>
-                      </div>
 
-                      <div className="mt-3 pt-2.5 border-t border-stone-200/60 flex items-center justify-between text-[11px]">
-                        <span className="text-stone-700 font-medium">{cust.leadStage}</span>
-                        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <a
-                            href={getTelLink(cust.phone)}
-                            onClick={() => setOutcomeTarget({ customer: cust, channel: 'Call' })}
-                            className="p-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200"
-                          >
-                            <Phone className="w-3 h-3" />
-                          </a>
-                          <a
-                            href={getWhatsAppLink(cust.whatsapp || cust.phone, 'Vanakkam')}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={() => setOutcomeTarget({ customer: cust, channel: 'WhatsApp' })}
-                            className="p-1 rounded-md bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200"
-                            title="WhatsApp"
-                          >
-                            <MessageSquare className="w-3 h-3" />
-                          </a>
-                          <button
-                            onClick={() => setEditingCustomer(cust)}
-                            className="p-1 rounded-md bg-stone-50 text-stone-600 hover:text-[#881337] hover:bg-rose-50 border border-stone-200"
-                            title="Edit customer details"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={async () => {
-                              if (window.confirm(`Move "${cust.companyName}" to 30-day trash?`)) {
-                                try {
-                                  await softDeleteCustomer(cust.id);
-                                  showToast(`Moved ${cust.companyName} to 30-day trash.`);
-                                } catch (err: any) {
-                                  console.error('Failed to move customer to trash:', err);
-                                  alert(err?.message || 'Failed to move customer to trash.');
+                        <div className="mt-3 pt-2.5 border-t border-stone-200/60 flex items-center justify-between text-[11px]">
+                          <span className="text-stone-700 font-medium">{cust.leadStage}</span>
+                          <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                            <a
+                              href={getTelLink(cust.phone)}
+                              onClick={() => setOutcomeTarget({ customer: cust, channel: 'Call' })}
+                              className="p-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200"
+                            >
+                              <Phone className="w-3 h-3" />
+                            </a>
+                            <a
+                              href={getWhatsAppLink(cust.whatsapp || cust.phone, 'Vanakkam')}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setOutcomeTarget({ customer: cust, channel: 'WhatsApp' })}
+                              className="p-1 rounded-md bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200"
+                              title="WhatsApp"
+                            >
+                              <MessageSquare className="w-3 h-3" />
+                            </a>
+                            <button
+                              onClick={() => setEditingCustomer(cust)}
+                              className="p-1 rounded-md bg-stone-50 text-stone-600 hover:text-[#881337] hover:bg-rose-50 border border-stone-200"
+                              title="Edit customer details"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (window.confirm(`Move "${cust.companyName}" to 30-day trash?`)) {
+                                  try {
+                                    await softDeleteCustomer(cust.id);
+                                    showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                                  } catch (err: any) {
+                                    console.error('Failed to move customer to trash:', err);
+                                    alert(err?.message || 'Failed to move customer to trash.');
+                                  }
                                 }
-                              }
-                            }}
-                            className="p-1 rounded-md bg-stone-50 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200"
-                            title="Move to 30-day Trash"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                              }}
+                              className="p-1 rounded-md bg-stone-50 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200"
+                              title="Move to 30-day Trash"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -902,18 +1339,19 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Customer Type</label>
-                  <select
-                    value={customerType}
-                    onChange={(e) => setCustomerType(e.target.value as CustomerType)}
-                    className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
-                  >
-                    <option value="Distributor">Distributor</option>
-                    <option value="Wholesaler">Wholesaler</option>
-                    <option value="Retailer">Retailer</option>
-                    <option value="Temple/Institution">Temple/Institution</option>
-                    <option value="Other">Other</option>
-                  </select>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">
+                    Customer Group <span className="text-rose-500">*</span>
+                  </label>
+                  <CustomerGroupSelect
+                    value={formGroupId}
+                    onChange={(gid) => setFormGroupId(gid)}
+                    allowUngrouped={true}
+                    preselectedGroupHint={
+                      selectedGroupId !== 'all' && selectedGroupId !== 'ungrouped'
+                        ? customerGroups.find((g) => g.id === selectedGroupId)?.name
+                        : null
+                    }
+                  />
                 </div>
 
                 <div>
@@ -959,22 +1397,32 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-stone-200">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 text-xs font-semibold rounded-lg border border-stone-300 hover:bg-stone-50"
+                  className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-stone-300 hover:bg-stone-50"
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] shadow-sm disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                  Save Customer
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={(e) => handleAddCustomer(e, true)}
+                    className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-[#881337]/30 text-[#881337] bg-rose-50 hover:bg-rose-100 disabled:opacity-50"
+                  >
+                    Save & Add Another
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] shadow-sm disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Save Customer
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1072,6 +1520,186 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
         existingCustomers={customers}
         onImportComplete={handleImportSuccess}
       />
+
+      {/* Duplicate Phone Detection Conflict Modal (4 Choices: Skip, Move, Update, Save Anyway / Open) */}
+      {duplicateConflict && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 pb-3 border-b border-stone-200">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-stone-900">Phone Number Already Exists</h3>
+                <p className="text-xs text-stone-600">
+                  Phone number <span className="font-mono font-bold text-stone-900">{formatPhoneDisplay(duplicateConflict.normalizedPhone)}</span> is already assigned.
+                </p>
+              </div>
+            </div>
+
+            {/* Existing Customer Details */}
+            <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-1.5 text-xs">
+              <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider">Existing Customer:</div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-stone-900 text-sm">{duplicateConflict.existingCustomer.companyName}</span>
+                <CustomerGroupBadge
+                  groupId={duplicateConflict.existingCustomer.groupId}
+                  groupName={duplicateConflict.existingCustomer.groupName}
+                />
+              </div>
+              <div className="text-stone-700">
+                Contact: <strong>{duplicateConflict.existingCustomer.contactPerson || '—'}</strong> · City: <strong>{duplicateConflict.existingCustomer.place?.city || 'Salem'}</strong>
+              </div>
+            </div>
+
+            {/* Target Group details */}
+            <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 text-xs text-amber-900">
+              You are attempting to add a lead for: <strong>"{duplicateConflict.pendingData.companyName}"</strong> in group <strong>"{duplicateConflict.pendingData.groupName}"</strong>.
+            </div>
+
+            {/* 4 Choices */}
+            <div className="space-y-2 pt-1">
+              {/* Choice 1: Skip */}
+              <button
+                type="button"
+                onClick={handleDuplicateSkip}
+                className="w-full p-2.5 text-left text-xs rounded-xl border border-stone-200 hover:bg-stone-50 transition-colors flex items-center justify-between"
+              >
+                <div>
+                  <div className="font-bold text-stone-900">1. Skip (Do not add)</div>
+                  <div className="text-stone-600 text-[11px]">Keep existing customer unchanged and discard duplicate form.</div>
+                </div>
+                <span className="text-stone-400 font-bold">→</span>
+              </button>
+
+              {/* Choice 2: Update existing customer */}
+              <div className="p-2.5 rounded-xl border border-stone-200 bg-stone-50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-stone-900 text-xs">2. Update existing customer</div>
+                    <div className="text-stone-600 text-[11px]">Enrich existing customer info and append inquiry note.</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicateUpdate(false)}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-stone-300 text-xs font-semibold text-stone-800 hover:bg-stone-100 transition-colors"
+                  >
+                    Fill Empty Fields Only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDuplicateUpdate(true)}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 transition-colors"
+                  >
+                    Overwrite Fields
+                  </button>
+                </div>
+              </div>
+
+              {/* Choice 3: Move existing customer to this group */}
+              <button
+                type="button"
+                onClick={handleDuplicateMove}
+                className="w-full p-2.5 text-left text-xs rounded-xl border border-stone-200 hover:bg-blue-50/70 hover:border-blue-300 transition-colors flex items-center justify-between"
+              >
+                <div>
+                  <div className="font-bold text-blue-900">3. Move to "{duplicateConflict.pendingData.groupName}"</div>
+                  <div className="text-blue-700 text-[11px]">
+                    Transfer "{duplicateConflict.existingCustomer.companyName}" from its current group to this group.
+                  </div>
+                </div>
+                <span className="text-blue-600 font-bold">→</span>
+              </button>
+
+              {/* Choice 4: Save anyway with reason */}
+              <div className="p-2.5 rounded-xl border border-stone-200 bg-stone-50 space-y-2">
+                <div>
+                  <div className="font-bold text-stone-900 text-xs">4. Save anyway (create duplicate record)</div>
+                  <div className="text-stone-600 text-[11px]">Require a business justification to allow shared phone number.</div>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Reason for duplicate (e.g. Branch of same enterprise, family member)..."
+                  value={duplicateReason}
+                  onChange={(e) => setDuplicateReason(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-stone-300 bg-white focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={handleDuplicateSaveAnyway}
+                  disabled={!duplicateReason.trim()}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#881337] text-white text-xs font-semibold hover:bg-[#70102e] disabled:opacity-50 transition-colors"
+                >
+                  Save Anyway with Reason
+                </button>
+              </div>
+
+              {/* Choice 5: Open existing customer profile */}
+              <button
+                type="button"
+                onClick={handleDuplicateOpenCustomer}
+                className="w-full py-2 text-center text-xs font-bold text-stone-700 hover:text-stone-900 hover:underline transition-colors"
+              >
+                Or Open "{duplicateConflict.existingCustomer.companyName}" Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Move Modal */}
+      {showBulkMoveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-stone-200 animate-in fade-in space-y-3">
+            <h3 className="font-bold text-sm text-stone-900 flex items-center gap-1.5">
+              <GitMerge className="w-4 h-4 text-[#881337]" /> Move {selectedIds.size} Customer(s) to Group
+            </h3>
+            <p className="text-xs text-stone-600">
+              Select the target customer group. All selected records will have their group re-assigned with an audit log entry.
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">Target Customer Group</label>
+              <select
+                value={bulkMoveTargetGroupId}
+                onChange={(e) => setBulkMoveTargetGroupId(e.target.value)}
+                className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 bg-white font-medium text-stone-800 focus:outline-hidden"
+              >
+                <option value="">-- Select Target Group --</option>
+                <option value="__ungrouped__">Ungrouped (Remove from group)</option>
+                {customerGroups
+                  .filter((g) => g.isActive && !g.isDeleted)
+                  .map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name} {g.nameTa ? `(${g.nameTa})` : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
+              <button
+                type="button"
+                onClick={() => setShowBulkMoveModal(false)}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-stone-300 hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteBulkMove}
+                disabled={!bulkMoveTargetGroupId || bulkMoving}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {bulkMoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Confirm Move
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Log Outreach Modal */}
       {outcomeTarget && (

@@ -22,6 +22,8 @@ import {
 import { Customer, CustomerType, CustomerStatus, LeadStage, LeadSource } from '../types';
 import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
 import { normalizePhone } from '../lib/phone';
+import { CustomerGroupSelect } from './customers/CustomerGroupSelect';
+import { useApp } from '../context/AppContext';
 
 interface EditCustomerModalProps {
   customer: Customer | null;
@@ -38,6 +40,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   onSave,
   onDelete,
 }) => {
+  const { customerGroups } = useApp();
   const [companyName, setCompanyName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [rawPhone, setRawPhone] = useState('');
@@ -50,7 +53,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const [city, setCity] = useState('Salem');
   const [district, setDistrict] = useState('Salem');
   const [state, setState] = useState('Tamil Nadu');
-  const [customerType, setCustomerType] = useState<CustomerType>('Distributor');
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [status, setStatus] = useState<CustomerStatus>('New customer');
   const [leadStage, setLeadStage] = useState<LeadStage>('New');
   const [source, setSource] = useState<LeadSource>('Meta Ads');
@@ -75,7 +78,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       setCity(customer.place?.city || customer.city || 'Salem');
       setDistrict(customer.place?.district || customer.place?.city || customer.city || 'Salem');
       setState(customer.place?.state || 'Tamil Nadu');
-      setCustomerType(customer.customerType || 'Distributor');
+      setGroupId(customer.groupId || null);
       setStatus(customer.status || 'New customer');
       setLeadStage(customer.leadStage || 'New');
       setSource(customer.source || 'Meta Ads');
@@ -158,7 +161,12 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
           district: district.trim(),
           state: state.trim() || 'Tamil Nadu',
         },
-        customerType,
+        groupId: groupId || null,
+        groupName: groupId ? (customerGroups.find((g) => g.id === groupId)?.name || 'Group') : 'Ungrouped',
+        ...(customer.groupId !== groupId ? {
+          previousGroupId: customer.groupId || null,
+          groupAssignedAt: new Date().toISOString(),
+        } : {}),
         status,
         leadStage,
         source,
@@ -384,18 +392,12 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block font-semibold text-stone-700 mb-1">Customer Type</label>
-                <select
-                  value={customerType}
-                  onChange={(e) => setCustomerType(e.target.value as CustomerType)}
-                  className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
-                >
-                  <option value="Distributor">Distributor</option>
-                  <option value="Wholesaler">Wholesaler</option>
-                  <option value="Retailer">Retailer</option>
-                  <option value="Temple/Institution">Temple/Institution</option>
-                  <option value="Other">Other</option>
-                </select>
+                <label className="block font-semibold text-stone-700 mb-1">Customer Group</label>
+                <CustomerGroupSelect
+                  value={groupId}
+                  onChange={(newGrpId) => setGroupId(newGrpId)}
+                  allowUngrouped={true}
+                />
               </div>
 
               <div>

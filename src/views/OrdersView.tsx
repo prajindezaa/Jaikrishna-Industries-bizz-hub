@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Order, OrderItem, Product, Customer, CustomerStatus } from '../types';
+import { CustomerGroupBadge } from '../components/customers/CustomerGroupBadge';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp, POOJA_PRODUCTS } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -32,7 +33,7 @@ import { Upload, Download, Eye } from 'lucide-react';
 export const OrdersView: React.FC = () => {
   const { t } = useLanguage();
   const { member } = useAuth();
-  const { orders, loadingOrders, customers, createOrderTransaction, softDeleteOrder, addCustomer } = useApp();
+  const { orders, loadingOrders, customers, customerGroups, createOrderTransaction, softDeleteOrder, addCustomer } = useApp();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -41,6 +42,7 @@ export const OrdersView: React.FC = () => {
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>('All');
   const [selectedDeliveryStatus, setSelectedDeliveryStatus] = useState<string>('All');
   const [selectedCity, setSelectedCity] = useState<string>('All');
+  const [selectedGroup, setSelectedGroup] = useState<string>('All');
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -172,6 +174,8 @@ export const OrdersView: React.FC = () => {
     new Set(orders.map((o) => o.customerCity).filter(Boolean))
   ) as string[];
 
+  const activeGroups = customerGroups.filter((g) => g.isActive && !g.isDeleted);
+
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
       o.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
@@ -182,8 +186,11 @@ export const OrdersView: React.FC = () => {
     const matchesPayment = selectedPaymentStatus === 'All' || o.paymentStatus === selectedPaymentStatus;
     const matchesDelivery = selectedDeliveryStatus === 'All' || o.deliveryStatus === selectedDeliveryStatus;
     const matchesCity = selectedCity === 'All' || o.customerCity === selectedCity;
+    const matchesGroup =
+      selectedGroup === 'All' ||
+      (selectedGroup === 'unknown' ? !o.customerGroupId : o.customerGroupId === selectedGroup);
 
-    return matchesSearch && matchesPayment && matchesDelivery && matchesCity && !o.isDeleted;
+    return matchesSearch && matchesPayment && matchesDelivery && matchesCity && matchesGroup && !o.isDeleted;
   });
 
   const totalRevenue = orders.reduce((acc, o) => acc + (o.paymentStatus === 'Paid' ? o.totalAmount : (o.paidAmount || 0)), 0);
@@ -365,6 +372,26 @@ export const OrdersView: React.FC = () => {
               </select>
             </div>
           )}
+
+          {/* Customer Group Filter */}
+          {activeGroups.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-stone-500">Group:</span>
+              <select
+                value={selectedGroup}
+                onChange={(e) => setSelectedGroup(e.target.value)}
+                className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
+              >
+                <option value="All">All Groups</option>
+                {activeGroups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+                <option value="unknown">Unknown Group (pre-groups)</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -407,6 +434,7 @@ export const OrdersView: React.FC = () => {
                   <th className="py-3 px-4">Order #</th>
                   <th className="py-3 px-4">Invoice #</th>
                   <th className="py-3 px-4">Customer &amp; City</th>
+                  <th className="py-3 px-4">Group</th>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Bill Value</th>
                   <th className="py-3 px-4">Payment</th>
@@ -438,6 +466,13 @@ export const OrdersView: React.FC = () => {
                       )}
                       {ord.customerGstin && (
                         <div className="text-[10px] font-mono text-stone-400">GST: {ord.customerGstin}</div>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {ord.customerGroupId ? (
+                        <CustomerGroupBadge groupId={ord.customerGroupId} groupName={ord.customerGroupName || undefined} />
+                      ) : (
+                        <span className="text-[10px] text-stone-400 italic">Unknown</span>
                       )}
                     </td>
                     <td className="py-3 px-4 text-stone-500 font-mono text-[11px]">

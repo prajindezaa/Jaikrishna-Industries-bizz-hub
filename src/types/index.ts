@@ -36,6 +36,67 @@ export interface TeamMember {
   updatedAt?: string;
 }
 
+export interface CustomerGroup {
+  id: string; // Deterministic slug or unique nanoid, e.g. "grp_distributor"
+  name: string; // Unique, case-insensitive, trimmed, max 40 chars
+  nameTa?: string; // Optional Tamil name, marked (needs proofreading by owner)
+  color: string; // Hex color code
+  icon: string; // Lucide icon key (e.g. 'Truck', 'Store', 'Building2', 'Landmark', 'Layers')
+  description?: string;
+  sortOrder: number;
+  isActive: boolean; // false = Archived
+  isDefault: boolean; // At most one group true
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  isDeleted: boolean;
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+}
+
+export interface CustomerGroupCountersDoc {
+  id: string; // 'aggregate'
+  totalActive: number;
+  ungroupedCount: number;
+  groupCounts: Record<string, { total: number; newCustomers: number; oldCustomers: number }>;
+  lastRecalculatedAt: string;
+  updatedAt: string;
+}
+
+export interface CustomerImportBatch {
+  id: string; // "batch_YYYYMMDD_HHmmss_xxx"
+  fileName: string;
+  fileSize: number;
+  importedBy: string;
+  importedAt: string;
+  targetMode: 'fixed_group' | 'file_column';
+  defaultGroupId?: string | null;
+  counts: {
+    totalRows: number;
+    created: number;
+    updated: number;
+    moved: number;
+    skipped: number;
+    failed: number;
+  };
+  groupBreakdown: Record<string, number>;
+  status: 'completed' | 'undone' | 'failed';
+  canUndoUntil: string;
+  undoExecutedAt?: string;
+  undoExecutedBy?: string;
+}
+
+export interface CustomerImportBatchItem {
+  id: string; // item id
+  batchId: string;
+  customerId: string;
+  action: 'created' | 'updated' | 'moved' | 'skipped';
+  previousGroupId?: string | null;
+  newGroupId?: string | null;
+  previousValues?: Record<string, unknown> | null;
+  importedAt: string;
+}
+
 export type CustomerType =
   | 'Distributor'
   | 'Wholesaler'
@@ -104,7 +165,12 @@ export interface Customer {
   city?: string; // City name
   isPhoneMissing?: boolean; // True when created from invoice without phone
   place: CustomerPlace;
-  customerType: CustomerType;
+  customerType?: CustomerType; // Deprecated in favor of groupId, retained during migration
+  groupId?: string | null; // null/empty string = Ungrouped
+  groupName?: string; // denormalized display name
+  groupAssignedAt?: string;
+  groupAssignedBy?: string;
+  previousGroupId?: string | null;
   status: CustomerStatus;
   source: LeadSource;
   campaignId?: string;
@@ -377,6 +443,8 @@ export interface Order {
   financialYear?: string; // e.g. "2026-2027" (April to March)
   customerId: string;
   customerName: string;
+  customerGroupId?: string | null; // Group at order time
+  customerGroupName?: string | null; // Denormalized name ("unknown group" for pre-existing orders)
   customerGstin?: string;
   customerAddress?: string;
   customerCity?: string;

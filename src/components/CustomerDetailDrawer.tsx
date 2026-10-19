@@ -20,11 +20,14 @@ import {
   FileText,
   AlertTriangle,
   Edit3,
+  Layers,
 } from 'lucide-react';
 import { Customer, CustomerStatus, LeadStage } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { formatPhoneDisplay, getTelLink, getWhatsAppLink } from '../lib/phone';
 import { useAuth } from '../context/AuthContext';
+import { useApp } from '../context/AppContext';
+import { CustomerGroupBadge } from './customers/CustomerGroupBadge';
 
 interface CustomerDetailDrawerProps {
   customer: Customer | null;
@@ -45,6 +48,7 @@ export const CustomerDetailDrawer: React.FC<CustomerDetailDrawerProps> = ({
 }) => {
   const { t } = useLanguage();
   const { member } = useAuth();
+  const { customerGroups } = useApp();
   const [activeTab, setActiveTab] = useState<'timeline' | 'details'>('timeline');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -99,7 +103,12 @@ export const CustomerDetailDrawer: React.FC<CustomerDetailDrawerProps> = ({
               {customer.status}
             </span>
             <span className="text-xs text-stone-400">·</span>
-            <span className="text-xs font-medium text-stone-600">{customer.customerType}</span>
+            <CustomerGroupBadge
+              groupId={customer.groupId}
+              groupName={customer.groupName}
+              group={customerGroups.find((g) => g.id === customer.groupId)}
+              size="sm"
+            />
           </div>
           <button onClick={onClose} className="p-1 text-stone-400 hover:text-stone-600 rounded-lg">
             <X className="w-5 h-5" />
@@ -200,6 +209,31 @@ export const CustomerDetailDrawer: React.FC<CustomerDetailDrawerProps> = ({
                   Next Follow-up: {customer.nextFollowUpDate || 'Not set'}
                 </span>
               </div>
+
+              {/* Customer Group Timeline Entry */}
+              {customer.groupId && (
+                <div className="p-3 bg-stone-50 rounded-lg border border-stone-100 space-y-1 text-xs">
+                  <div className="font-semibold text-stone-700 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Customer Group Assignment</span>
+                  </div>
+                  <div className="text-[11px] text-stone-600">
+                    Currently assigned to{' '}
+                    <CustomerGroupBadge
+                      groupId={customer.groupId}
+                      groupName={customer.groupName}
+                      group={customerGroups.find((g) => g.id === customer.groupId)}
+                      size="sm"
+                    />
+                    {customer.groupAssignedAt && (
+                      <span className="text-stone-400 block pt-0.5 font-mono text-[10px]">
+                        Assigned on {new Date(customer.groupAssignedAt).toLocaleDateString()}
+                        {customer.groupAssignedBy ? ` by ${customer.groupAssignedBy}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Status Change History */}
               {customer.statusHistory && customer.statusHistory.length > 0 && (

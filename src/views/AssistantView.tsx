@@ -32,7 +32,7 @@ interface Message {
 export const AssistantView: React.FC = () => {
   const { user, member } = useAuth();
   const { t } = useLanguage();
-  const { customers, tasks, orders, plans, metaAds, festivalEvents } = useApp();
+  const { customers, tasks, orders, plans, metaAds, festivalEvents, customerGroups } = useApp();
 
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -125,16 +125,28 @@ export const AssistantView: React.FC = () => {
     const contextData = {
       summary: {
         totalCustomers: customers.length,
+        totalCustomerGroups: customerGroups.filter((g) => g.isActive && !g.isDeleted).length,
         totalOrders: orders.length,
         totalTasks: tasks.length,
         totalMetaAds: metaAds.length,
         totalFestivals: festivalEvents.length,
       },
+      customerGroups: customerGroups
+        .filter((g) => g.isActive && !g.isDeleted)
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          nameTa: g.nameTa,
+          color: g.color,
+          description: g.description,
+          customerCount: customers.filter((c) => c.groupId === g.id && !c.isDeleted).length,
+        })),
       customers: customers.slice(0, 30).map((c) => ({
         id: c.id,
         companyName: c.companyName,
         contactPerson: c.contactPerson,
         phone: c.phone,
+        groupName: c.groupName || 'Ungrouped',
         city: c.place?.city,
         status: c.status,
         campaignId: c.campaignId,
@@ -158,6 +170,7 @@ export const AssistantView: React.FC = () => {
         orderNumber: o.orderNumber,
         invoiceNumber: o.invoiceNumber,
         customerName: o.customerName,
+        customerGroupName: o.customerGroupName || 'Unknown',
         totalAmount: o.totalAmount,
         paidAmount: o.paidAmount || 0,
         outstandingAmount: o.outstandingAmount !== undefined ? o.outstandingAmount : Math.max(0, o.totalAmount - (o.paidAmount || 0)),

@@ -17,6 +17,7 @@ import {
   where,
   orderBy,
   getDocs,
+  getDoc,
   limit,
   serverTimestamp,
   Timestamp,
@@ -46,6 +47,10 @@ import {
   WhatsAppHubSettings,
   GlobalSettings,
   Offer,
+  CustomerGroup,
+  CustomerGroupCountersDoc,
+  CustomerImportBatch,
+  CustomerImportBatchItem,
 } from '../types';
 import { normalizePhone } from '../lib/phone';
 import {
@@ -116,7 +121,33 @@ interface AppContextType {
   updateCustomer: (id: string, updates: Partial<Customer>) => Promise<void>;
   softDeleteCustomer: (id: string) => Promise<void>;
   logOutreach: (customerId: string, log: Omit<OutreachLog, 'id' | 'loggedAt' | 'loggedBy'>) => Promise<void>;
-  importCustomersBatch: (newCustomers: Customer[]) => Promise<{ imported: number; updated: number; skipped: number }>;
+  importCustomersBatch: (
+    newCustomers: Customer[],
+    options?: {
+      duplicateAction?: 'skip' | 'update' | 'move' | 'import_anyway';
+      duplicateReason?: string;
+      batchInfo?: {
+        fileName: string;
+        fileSize: number;
+        targetMode: 'fixed_group' | 'file_column';
+        defaultGroupId?: string | null;
+      };
+    }
+  ) => Promise<{ imported: number; updated: number; moved: number; skipped: number; batchId?: string }>;
+  undoCustomerImportBatch: (batchId: string) => Promise<{ reverted: number; purged: number }>;
+  // Customer Groups
+  customerGroups: CustomerGroup[];
+  loadingCustomerGroups: boolean;
+  groupCounters: CustomerGroupCountersDoc | null;
+  createCustomerGroup: (groupData: Omit<CustomerGroup, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'createdBy'>) => Promise<string>;
+  updateCustomerGroup: (id: string, updates: Partial<CustomerGroup>) => Promise<void>;
+  archiveCustomerGroup: (id: string) => Promise<void>;
+  restoreCustomerGroup: (id: string) => Promise<void>;
+  mergeCustomerGroups: (sourceGroupId: string, targetGroupId: string) => Promise<{ movedCount: number }>;
+  deleteCustomerGroup: (id: string) => Promise<void>;
+  createStarterGroups: () => Promise<number>;
+  recalculateGroupCounters: () => Promise<CustomerGroupCountersDoc>;
+  migrateOldCustomerTypesToGroups: (mapping: Record<string, string>) => Promise<{ updatedCount: number; dryRun?: boolean }>;
 
   // Tasks
   tasks: Task[];
@@ -276,6 +307,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
+
+  // Customer Groups & Counters State
+  const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>([]);
+  const [loadingCustomerGroups, setLoadingCustomerGroups] = useState(true);
+  const [deletedCustomerGroups, setDeletedCustomerGroups] = useState<CustomerGroup[]>([]);
+  const [groupCounters, setGroupCounters] = useState<CustomerGroupCountersDoc | null>(null);
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
@@ -552,8 +589,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     );
 
+    // I. Listen to Customer Groups
+    const groupsUnsub = onSnapshot(
+      collection(db, 'customer_groups'),
+      (snapshot) => {
+        const active: CustomerGroup[] = [];
+        const deleted: CustomerGroup[] = [];
+        snapshot.forEach((d) => {
+          const data = { id: d.id, ...d.data() } as CustomerGroup;
+          if (data.isDeleted) {
+            deleted.push(data);
+          } else {
+            active.push(data);
+          }
+        });
+        active.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+        setCustomerGroups(active);
+        setDeletedCustomerGroups(deleted);
+        setLoadingCustomerGroups(false);
+      },
+      (err) => {
+        handleSnapshotError(err, 'customer_groups');
+        setLoadingCustomerGroups(false);
+      }
+    );
+
+    // J. Listen to Customer Group Counters
+    const countersUnsub = onSnapshot(
+      doc(db, 'customer_group_counters', 'aggregate'),
+      (snap) => {
+        if (snap.exists()) {
+          setGroupCounters({ id: 'aggregate', ...snap.data() } as CustomerGroupCountersDoc);
+        } else {
+          setGroupCounters(null);
+        }
+      },
+      (err) => {
+        console.warn('Counters doc not yet initialized or read error:', err);
+      }
+    );
+
     return () => {
       custUnsub();
+      groupsUnsub();
+      countersUnsub();
       taskUnsub();
       orderUnsub();
       planUnsub();
@@ -912,13 +991,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const importCustomersBatch = async (
-    newCustomers: Customer[]
-  ): Promise<{ imported: number; updated: number; skipped: number }> => {
+    newCustomers: Customer[],
+    options?: {
+      duplicateAction?: 'skip' | 'update' | 'move' | 'import_anyway';
+      duplicateReason?: string;
+      batchInfo?: {
+        fileName: string;
+        fileSize: number;
+        targetMode: 'fixed_group' | 'file_column';
+        defaultGroupId?: string | null;
+      };
+    }
+  ): Promise<{ imported: number; updated: number; moved: number; skipped: number; batchId?: string }> => {
     if (!db) throw new Error('Firestore not initialized');
+
+    const duplicateAction = options?.duplicateAction || 'skip';
+    const userEmail = member?.email || user?.email || 'import';
+    const now = new Date().toISOString();
 
     let imported = 0;
     let updated = 0;
+    let moved = 0;
     let skipped = 0;
+
+    const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const batchItems: CustomerImportBatchItem[] = [];
+    const groupBreakdown: Record<string, number> = {};
 
     for (const cust of newCustomers) {
       const normalized = normalizePhone(cust.phone);
@@ -927,22 +1025,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         continue;
       }
 
-      const existing = customers.find((c) => c.phone === normalized);
+      const existing = customers.find((c) => c.phone === normalized && !c.isDeleted);
       if (existing) {
-        // Update existing customer with new info
-        await updateDoc(doc(db, 'customers', existing.id), cleanFirestoreData({
-          ...cust,
-          phone: normalized,
-          id: existing.id,
-          totalOrdersCount: existing.totalOrdersCount,
-          totalRevenue: existing.totalRevenue,
-          statusHistory: existing.statusHistory,
-          lastWriteSource: 'bulk_import' as const,
-          updatedBy: member?.email || user?.email || 'import',
-          updatedAt: new Date().toISOString(),
-        }));
-        updated++;
+        if (duplicateAction === 'skip') {
+          skipped++;
+          continue;
+        } else if (duplicateAction === 'update') {
+          // Update existing customer fields (enrich empty fields and append notes)
+          const mergedNotes = cust.notes
+            ? existing.notes
+              ? `${existing.notes}\n[Batch Import Update]: ${cust.notes}`
+              : cust.notes
+            : existing.notes;
+
+          const updates: Partial<Customer> = {
+            contactPerson: existing.contactPerson || cust.contactPerson,
+            place: existing.place?.city ? existing.place : cust.place,
+            notes: mergedNotes,
+            lastWriteSource: 'bulk_import' as const,
+            updatedBy: userEmail,
+            updatedAt: now,
+          };
+
+          await updateDoc(doc(db, 'customers', existing.id), cleanFirestoreData(updates));
+          batchItems.push({
+            id: `item_${Date.now()}_${batchItems.length}`,
+            batchId,
+            customerId: existing.id,
+            action: 'updated',
+            importedAt: now,
+            previousGroupId: existing.groupId || null,
+            newGroupId: existing.groupId || null,
+          });
+          updated++;
+        } else if (duplicateAction === 'move') {
+          // Move existing customer into target group
+          const updates: Partial<Customer> = {
+            groupId: cust.groupId || null,
+            groupName: cust.groupName || 'Ungrouped',
+            groupAssignedAt: now,
+            groupAssignedBy: userEmail,
+            previousGroupId: existing.groupId || null,
+            lastWriteSource: 'bulk_import' as const,
+            updatedBy: userEmail,
+            updatedAt: now,
+          };
+          await updateDoc(doc(db, 'customers', existing.id), cleanFirestoreData(updates));
+          batchItems.push({
+            id: `item_${Date.now()}_${batchItems.length}`,
+            batchId,
+            customerId: existing.id,
+            action: 'moved',
+            importedAt: now,
+            previousGroupId: existing.groupId || null,
+            newGroupId: cust.groupId || null,
+          });
+          moved++;
+        } else if (duplicateAction === 'import_anyway') {
+          // Create duplicate record with warning tag & reason
+          const docRef = doc(collection(db, 'customers'));
+          const fullCust: Customer = {
+            ...cust,
+            id: docRef.id,
+            phone: normalized,
+            whatsapp: cust.whatsapp ? normalizePhone(cust.whatsapp) || normalized : normalized,
+            tags: [...(cust.tags || []), 'Duplicate-Phone-Allowed'],
+            notes: options?.duplicateReason
+              ? `${cust.notes || ''}\n[Duplicate Import Reason]: ${options.duplicateReason.trim()}`
+              : cust.notes,
+            totalOrdersCount: 0,
+            totalRevenue: 0,
+            statusHistory: [
+              {
+                from: cust.status,
+                to: cust.status,
+                changedBy: userEmail,
+                changedAt: now,
+                reason: 'Bulk CSV/Excel import (Duplicate phone allowed)',
+              },
+            ],
+            lastWriteSource: 'bulk_import' as const,
+            updatedBy: userEmail,
+            isDeleted: false,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await setDoc(docRef, cleanFirestoreData(fullCust));
+          batchItems.push({
+            id: `item_${Date.now()}_${batchItems.length}`,
+            batchId,
+            customerId: docRef.id,
+            action: 'created',
+            importedAt: now,
+            newGroupId: cust.groupId || null,
+          });
+          imported++;
+        }
       } else {
+        // Brand new customer record
         const docRef = doc(collection(db, 'customers'));
         const fullCust: Customer = {
           ...cust,
@@ -955,30 +1135,142 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             {
               from: cust.status,
               to: cust.status,
-              changedBy: member?.email || 'import',
-              changedAt: new Date().toISOString(),
+              changedBy: userEmail,
+              changedAt: now,
               reason: 'Bulk CSV/Excel import',
             },
           ],
           lastWriteSource: 'bulk_import' as const,
-          updatedBy: member?.email || user?.email || 'import',
+          updatedBy: userEmail,
           isDeleted: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: now,
+          updatedAt: now,
         };
         await setDoc(docRef, cleanFirestoreData(fullCust));
+        batchItems.push({
+          id: `item_${Date.now()}_${batchItems.length}`,
+          batchId,
+          customerId: docRef.id,
+          action: 'created',
+          importedAt: now,
+          newGroupId: cust.groupId || null,
+        });
         imported++;
       }
+
+      // Track group breakdown
+      const gName = cust.groupName || 'Ungrouped';
+      groupBreakdown[gName] = (groupBreakdown[gName] || 0) + 1;
+    }
+
+    // Save batch metadata for audit and 24h undo support
+    try {
+      const batchDoc: CustomerImportBatch = {
+        id: batchId,
+        fileName: options?.batchInfo?.fileName || 'Customer_Import.xlsx',
+        fileSize: options?.batchInfo?.fileSize || 0,
+        importedBy: userEmail,
+        importedAt: now,
+        targetMode: options?.batchInfo?.targetMode || 'fixed_group',
+        defaultGroupId: options?.batchInfo?.defaultGroupId || null,
+        counts: {
+          totalRows: newCustomers.length,
+          created: imported,
+          updated,
+          moved,
+          skipped,
+          failed: 0,
+        },
+        groupBreakdown,
+        status: 'completed',
+        canUndoUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+      await setDoc(doc(db, 'customer_import_batches', batchId), cleanFirestoreData(batchDoc));
+
+      // Batch write item logs
+      if (db) {
+        const itemsBatch = writeBatch(db);
+        batchItems.forEach((item) => {
+          const itemRef = doc(db!, 'customer_import_batches', batchId, 'items', item.id);
+          itemsBatch.set(itemRef, cleanFirestoreData(item));
+        });
+        await itemsBatch.commit();
+      }
+    } catch (batchLogErr) {
+      console.warn('Failed to record customer_import_batches doc:', batchLogErr);
     }
 
     await logActivity(
       'customer',
-      'batch-import',
+      batchId,
       'create',
-      `Imported ${imported} new customers, updated ${updated}, skipped ${skipped}`
+      `Imported batch "${options?.batchInfo?.fileName || 'Spreadsheet'}": ${imported} created, ${updated} updated, ${moved} moved, ${skipped} skipped.`
     );
 
-    return { imported, updated, skipped };
+    // Atomic aggregate counter update once per batch
+    await recalculateGroupCounters();
+
+    return { imported, updated, moved, skipped, batchId };
+  };
+
+  const undoCustomerImportBatch = async (batchId: string): Promise<{ reverted: number; purged: number }> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const batchSnap = await getDoc(doc(db, 'customer_import_batches', batchId));
+    if (!batchSnap.exists()) {
+      throw new Error(`Import batch "${batchId}" not found.`);
+    }
+
+    const batchData = batchSnap.data() as CustomerImportBatch;
+    if (batchData.status === 'undone') {
+      throw new Error(`Batch "${batchId}" has already been undone.`);
+    }
+
+    const itemsSnap = await getDocs(collection(db, 'customer_import_batches', batchId, 'items'));
+    let purged = 0;
+    let reverted = 0;
+    const userEmail = member?.email || user?.email || 'admin';
+    const now = new Date().toISOString();
+
+    for (const d of itemsSnap.docs) {
+      const item = d.data() as CustomerImportBatchItem;
+      if (item.action === 'created') {
+        // Soft delete created customers
+        await updateDoc(doc(db, 'customers', item.customerId), cleanFirestoreData({
+          isDeleted: true,
+          deletedAt: now,
+          deletedBy: userEmail,
+          lastWriteSource: 'bulk_import' as const,
+        }));
+        purged++;
+      } else if (item.action === 'moved' && item.previousGroupId !== undefined) {
+        // Revert to previous group
+        const prevGroup = customerGroups.find((g) => g.id === item.previousGroupId);
+        await updateDoc(doc(db, 'customers', item.customerId), cleanFirestoreData({
+          groupId: item.previousGroupId || null,
+          groupName: prevGroup ? prevGroup.name : 'Ungrouped',
+          groupAssignedAt: now,
+          groupAssignedBy: userEmail,
+          lastWriteSource: 'bulk_import' as const,
+        }));
+        reverted++;
+      }
+    }
+
+    await updateDoc(doc(db, 'customer_import_batches', batchId), cleanFirestoreData({
+      status: 'undone',
+      undoExecutedAt: now,
+      undoExecutedBy: userEmail,
+    }));
+
+    await logActivity(
+      'customer',
+      batchId,
+      'soft_delete',
+      `Undid import batch "${batchData.fileName}": soft-deleted ${purged} created leads, reverted ${reverted} moved leads.`
+    );
+
+    await recalculateGroupCounters();
+    return { purged, reverted };
   };
 
   // 3. Tasks Operations
@@ -1116,6 +1408,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         outstandingAmount: initialOutstanding,
         statusHistory: initialStatusHistory,
         recordedBy: member?.email || user?.email || 'admin',
+        // Denormalize customer group at order time (Phase 4: group-at-order-time)
+        customerGroupId: custData.groupId || null,
+        customerGroupName: custData.groupName || null,
         isDeleted: false,
         createdAt: now,
         updatedAt: now,
@@ -1951,15 +2246,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const delTime = c.deletedAt ? new Date(c.deletedAt).getTime() : now;
       const ageDays = Math.floor((now - delTime) / (1000 * 60 * 60 * 24));
       const remaining = Math.max(0, 30 - ageDays);
+      const group = customerGroups.find((g) => g.id === c.groupId);
+      const groupName = group ? group.name : (c.groupId ? 'Unknown Group' : 'Ungrouped');
       list.push({
         id: c.id,
         entity: 'customer',
         title: c.companyName,
-        details: `${c.place.city} · ${c.phone} · ${c.customerType}`,
+        details: `${c.place.city} · ${c.phone} · Group: ${groupName}`,
         deletedBy: c.deletedBy || 'admin',
         deletedAt: c.deletedAt || new Date().toISOString(),
         daysRemaining: remaining,
         originalData: c as unknown as Record<string, unknown>,
+      });
+    });
+
+    // Customer Groups in trash
+    deletedCustomerGroups.forEach((g) => {
+      const delTime = g.deletedAt ? new Date(g.deletedAt).getTime() : now;
+      const ageDays = Math.floor((now - delTime) / (1000 * 60 * 60 * 24));
+      const remaining = Math.max(0, 30 - ageDays);
+      list.push({
+        id: g.id,
+        entity: 'customer', // displayed under customer-related trash
+        title: `Customer Group: ${g.name}`,
+        details: `${g.description || 'No description'} · Color: ${g.color}`,
+        deletedBy: g.deletedBy || 'admin',
+        deletedAt: g.deletedAt || new Date().toISOString(),
+        daysRemaining: remaining,
+        originalData: g as unknown as Record<string, unknown>,
       });
     });
 
@@ -2015,27 +2329,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     return list.sort((a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime());
-  }, [deletedCustomers, deletedTasks, deletedOrders, deletedMetaAds]);
+  }, [deletedCustomers, deletedCustomerGroups, customerGroups, deletedTasks, deletedOrders, deletedMetaAds]);
 
   const restoreTrashItem = async (item: TrashItem): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
-    const colName =
-      item.entity === 'customer'
-        ? 'customers'
-        : item.entity === 'task'
-        ? 'tasks'
-        : item.entity === 'order'
-        ? 'orders'
-        : 'meta_ads';
+    const isGroup = item.title.startsWith('Customer Group:');
+    const colName = isGroup
+      ? 'customer_groups'
+      : item.entity === 'customer'
+      ? 'customers'
+      : item.entity === 'task'
+      ? 'tasks'
+      : item.entity === 'order'
+      ? 'orders'
+      : 'meta_ads';
     const userEmail = member?.email || user?.email || 'admin';
     const updates: Record<string, any> = {
       isDeleted: false,
       deletedAt: null,
       updatedAt: new Date().toISOString(),
     };
-    if (item.entity === 'customer') {
+    if (colName === 'customers') {
       updates.updatedBy = userEmail;
       updates.lastWriteSource = 'manual_edit';
+
+      // Check if original customer was in an archived or deleted group
+      const custData = item.originalData as Partial<Customer>;
+      if (custData?.groupId) {
+        const targetGroup = customerGroups.find((g) => g.id === custData.groupId);
+        if (!targetGroup || !targetGroup.isActive) {
+          // If group is archived or deleted, reset to null (Ungrouped) upon restore
+          updates.groupId = null;
+          updates.groupName = 'Ungrouped';
+        }
+      }
     }
     await updateDoc(doc(db, colName, item.id), cleanFirestoreData(updates));
     await logActivity(item.entity, item.id, 'restore', `Restored ${item.title} from trash`);
@@ -2043,14 +2370,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const permanentlyDeleteTrashItem = async (item: TrashItem): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
-    const colName =
-      item.entity === 'customer'
-        ? 'customers'
-        : item.entity === 'task'
-        ? 'tasks'
-        : item.entity === 'order'
-        ? 'orders'
-        : 'meta_ads';
+    const isGroup = item.title.startsWith('Customer Group:');
+    const colName = isGroup
+      ? 'customer_groups'
+      : item.entity === 'customer'
+      ? 'customers'
+      : item.entity === 'task'
+      ? 'tasks'
+      : item.entity === 'order'
+      ? 'orders'
+      : 'meta_ads';
     await deleteDoc(doc(db, colName, item.id));
     await logActivity(item.entity, item.id, 'update', `Permanently deleted ${item.title}`);
   };
@@ -2065,6 +2394,362 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
     return purged;
+  };
+
+  // -------------------------------------------------------------
+  // CUSTOMER GROUPS & COUNTERS MANAGEMENT (Phase 1)
+  // -------------------------------------------------------------
+
+  const recalculateGroupCounters = async (): Promise<CustomerGroupCountersDoc> => {
+    if (!db) throw new Error('Firestore not initialized');
+    
+    // Calculate counts exclusively from active, non-deleted customers
+    const activeCusts = customers.filter((c) => !c.isDeleted);
+    const groupCounts: Record<string, { total: number; newCustomers: number; oldCustomers: number }> = {};
+    let ungrouped = 0;
+
+    for (const g of customerGroups) {
+      if (!g.isDeleted) {
+        groupCounts[g.id] = { total: 0, newCustomers: 0, oldCustomers: 0 };
+      }
+    }
+
+    for (const c of activeCusts) {
+      if (c.groupId && groupCounts[c.groupId]) {
+        groupCounts[c.groupId].total++;
+        if (c.status === 'New customer') groupCounts[c.groupId].newCustomers++;
+        else groupCounts[c.groupId].oldCustomers++;
+      } else {
+        ungrouped++;
+      }
+    }
+
+    const counterData: CustomerGroupCountersDoc = {
+      id: 'aggregate',
+      totalActive: activeCusts.length,
+      ungroupedCount: ungrouped,
+      groupCounts,
+      lastRecalculatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await setDoc(doc(db, 'customer_group_counters', 'aggregate'), cleanFirestoreData(counterData));
+    await logActivity('setting', 'aggregate', 'update', `Recalculated customer group counters (${activeCusts.length} customers, ${customerGroups.length} groups)`);
+    return counterData;
+  };
+
+  const createCustomerGroup = async (
+    groupData: Omit<CustomerGroup, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'createdBy'>
+  ): Promise<string> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const cleanName = groupData.name.trim();
+    if (!cleanName) throw new Error('Group name cannot be empty');
+    if (cleanName.length > 40) throw new Error('Group name must be 40 characters or less');
+
+    // Case-insensitive duplicate check
+    const existing = customerGroups.find(
+      (g) => !g.isDeleted && g.name.trim().toLowerCase() === cleanName.toLowerCase()
+    );
+    if (existing) {
+      throw new Error(`A customer group named "${existing.name}" already exists.`);
+    }
+
+    if (customerGroups.filter((g) => !g.isDeleted).length >= 30) {
+      throw new Error('Maximum limit of 30 customer groups reached.');
+    }
+
+    const now = new Date().toISOString();
+    const userEmail = member?.email || user?.email || 'admin';
+    const groupRef = doc(collection(db, 'customer_groups'));
+    const newGroup: CustomerGroup = {
+      ...groupData,
+      id: groupRef.id,
+      name: cleanName,
+      nameTa: groupData.nameTa?.trim() || '',
+      color: groupData.color || '#881337',
+      icon: groupData.icon || 'Truck',
+      sortOrder: groupData.sortOrder ?? customerGroups.length,
+      isActive: true,
+      isDefault: Boolean(groupData.isDefault),
+      createdBy: userEmail,
+      createdAt: now,
+      updatedAt: now,
+      isDeleted: false,
+    };
+
+    const batch = writeBatch(db);
+    batch.set(groupRef, cleanFirestoreData(newGroup));
+
+    // If marked default, unset default on other groups
+    if (newGroup.isDefault) {
+      customerGroups.forEach((g) => {
+        if (g.id !== newGroup.id && g.isDefault) {
+          batch.update(doc(db!, 'customer_groups', g.id), { isDefault: false, updatedAt: now });
+        }
+      });
+    }
+
+    await batch.commit();
+    await logActivity('setting', newGroup.id, 'create', `Created customer group: ${newGroup.name}`);
+    await recalculateGroupCounters();
+    return newGroup.id;
+  };
+
+  const updateCustomerGroup = async (id: string, updates: Partial<CustomerGroup>): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const existing = customerGroups.find((g) => g.id === id);
+    if (!existing) throw new Error('Customer group not found');
+
+    if (updates.name) {
+      const cleanName = updates.name.trim();
+      if (!cleanName) throw new Error('Group name cannot be empty');
+      if (cleanName.length > 40) throw new Error('Group name must be 40 characters or less');
+      const dup = customerGroups.find(
+        (g) => g.id !== id && !g.isDeleted && g.name.trim().toLowerCase() === cleanName.toLowerCase()
+      );
+      if (dup) throw new Error(`Another group named "${dup.name}" already exists.`);
+    }
+
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'customer_groups', id), cleanFirestoreData({ ...updates, updatedAt: now }));
+
+    if (updates.isDefault) {
+      customerGroups.forEach((g) => {
+        if (g.id !== id && g.isDefault) {
+          batch.update(doc(db!, 'customer_groups', g.id), { isDefault: false, updatedAt: now });
+        }
+      });
+    }
+
+    await batch.commit();
+    await logActivity('setting', id, 'update', `Updated customer group: ${updates.name || existing.name}`);
+  };
+
+  const archiveCustomerGroup = async (id: string): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const existing = customerGroups.find((g) => g.id === id);
+    if (!existing) throw new Error('Customer group not found');
+
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, 'customer_groups', id), {
+      isActive: false,
+      isDefault: false,
+      updatedAt: now,
+    });
+    await logActivity('setting', id, 'update', `Archived customer group: ${existing.name}`);
+  };
+
+  const restoreCustomerGroup = async (id: string): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const existing = customerGroups.find((g) => g.id === id);
+    if (!existing) throw new Error('Customer group not found');
+
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, 'customer_groups', id), {
+      isActive: true,
+      updatedAt: now,
+    });
+    await logActivity('setting', id, 'update', `Restored customer group from archive: ${existing.name}`);
+  };
+
+  const mergeCustomerGroups = async (
+    sourceGroupId: string,
+    targetGroupId: string
+  ): Promise<{ movedCount: number }> => {
+    if (!db) throw new Error('Firestore not initialized');
+    if (sourceGroupId === targetGroupId) throw new Error('Cannot merge a group into itself');
+
+    const sourceGroup = customerGroups.find((g) => g.id === sourceGroupId);
+    const targetGroup = customerGroups.find((g) => g.id === targetGroupId);
+    if (!sourceGroup || !targetGroup) throw new Error('Invalid source or target group');
+
+    const affectedCustomers = customers.filter((c) => !c.isDeleted && c.groupId === sourceGroupId);
+    const now = new Date().toISOString();
+    const userEmail = member?.email || user?.email || 'admin';
+
+    // Batch updates in chunks of 400
+    const chunkSize = 400;
+    for (let i = 0; i < affectedCustomers.length; i += chunkSize) {
+      const chunk = affectedCustomers.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      for (const cust of chunk) {
+        batch.update(
+          doc(db, 'customers', cust.id),
+          cleanFirestoreData({
+            groupId: targetGroupId,
+            groupName: targetGroup.name,
+            previousGroupId: sourceGroupId,
+            groupAssignedAt: now,
+            groupAssignedBy: userEmail,
+            lastWriteSource: 'manual_edit',
+            updatedBy: userEmail,
+            updatedAt: now,
+          })
+        );
+      }
+      await batch.commit();
+    }
+
+    // Archive the merged source group
+    await updateDoc(doc(db, 'customer_groups', sourceGroupId), {
+      isActive: false,
+      isDefault: false,
+      updatedAt: now,
+    });
+
+    await logActivity(
+      'setting',
+      sourceGroupId,
+      'update',
+      `Merged group "${sourceGroup.name}" into "${targetGroup.name}". Moved ${affectedCustomers.length} customer(s).`
+    );
+
+    await recalculateGroupCounters();
+    return { movedCount: affectedCustomers.length };
+  };
+
+  const deleteCustomerGroup = async (id: string): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const existing = customerGroups.find((g) => g.id === id);
+    if (!existing) throw new Error('Group not found');
+
+    const assignedCount = customers.filter((c) => !c.isDeleted && c.groupId === id).length;
+    if (assignedCount > 0) {
+      throw new Error(`Cannot delete group "${existing.name}" because it still has ${assignedCount} customer(s). Merge or archive it first.`);
+    }
+
+    const now = new Date().toISOString();
+    const userEmail = member?.email || user?.email || 'admin';
+    await updateDoc(doc(db, 'customer_groups', id), {
+      isDeleted: true,
+      deletedAt: now,
+      deletedBy: userEmail,
+      updatedAt: now,
+    });
+
+    await logActivity('setting', id, 'soft_delete', `Moved customer group "${existing.name}" to trash.`);
+    await recalculateGroupCounters();
+  };
+
+  const createStarterGroups = async (): Promise<number> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const starterTemplates: Array<Omit<CustomerGroup, 'id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'createdBy'>> = [
+      {
+        name: 'Distributor',
+        nameTa: 'விநியோகஸ்தர்',
+        color: '#881337', // Brand Maroon
+        icon: 'Truck',
+        description: 'Large regional distributors with wholesale bulk order capacity.',
+        sortOrder: 0,
+        isActive: true,
+        isDefault: true,
+      },
+      {
+        name: 'Wholesaler',
+        nameTa: 'மொத்த வியாபாரி',
+        color: '#d97706', // Amber / Gold
+        icon: 'Store',
+        description: 'District pooja stores and wholesale markets buying in cartons.',
+        sortOrder: 1,
+        isActive: true,
+        isDefault: false,
+      },
+      {
+        name: 'Retailer',
+        nameTa: 'சில்லறை வியாபாரி',
+        color: '#0284c7', // Sky Blue
+        icon: 'Building2',
+        description: 'Independent retail pooja stalls, provision shops and supermarkets.',
+        sortOrder: 2,
+        isActive: true,
+        isDefault: false,
+      },
+      {
+        name: 'Temple/Institution',
+        nameTa: 'கோயில் / நிறுவனம்',
+        color: '#7c3aed', // Purple
+        icon: 'Landmark',
+        description: 'Devasthanam trusts, temple management committees & mutts.',
+        sortOrder: 3,
+        isActive: true,
+        isDefault: false,
+      },
+      {
+        name: 'Other',
+        nameTa: 'மற்றவை',
+        color: '#64748b', // Slate Gray
+        icon: 'Layers',
+        description: 'Direct consumers, corporate gifts and unclassified inquiries.',
+        sortOrder: 4,
+        isActive: true,
+        isDefault: false,
+      },
+    ];
+
+    let created = 0;
+    for (const tpl of starterTemplates) {
+      const exists = customerGroups.find(
+        (g) => !g.isDeleted && g.name.trim().toLowerCase() === tpl.name.toLowerCase()
+      );
+      if (!exists) {
+        await createCustomerGroup(tpl);
+        created++;
+      }
+    }
+    await recalculateGroupCounters();
+    return created;
+  };
+
+  const migrateOldCustomerTypesToGroups = async (
+    mapping: Record<string, string>
+  ): Promise<{ updatedCount: number; dryRun?: boolean }> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const userEmail = member?.email || user?.email || 'migration';
+    const now = new Date().toISOString();
+
+    const targetsToUpdate = customers.filter(
+      (c) => !c.isDeleted && !c.groupId && (c.customerType || mapping['__default'])
+    );
+
+    let updatedCount = 0;
+    const chunkSize = 400;
+
+    for (let i = 0; i < targetsToUpdate.length; i += chunkSize) {
+      const chunk = targetsToUpdate.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      for (const cust of chunk) {
+        const rawType = cust.customerType || '';
+        const targetGroupId = mapping[rawType] || mapping['__default'] || null;
+        if (targetGroupId) {
+          const matchedGroup = customerGroups.find((g) => g.id === targetGroupId);
+          batch.update(
+            doc(db, 'customers', cust.id),
+            cleanFirestoreData({
+              groupId: targetGroupId,
+              groupName: matchedGroup ? matchedGroup.name : 'Unknown Group',
+              groupAssignedAt: now,
+              groupAssignedBy: userEmail,
+              lastWriteSource: 'system',
+              updatedBy: userEmail,
+              updatedAt: now,
+            })
+          );
+          updatedCount++;
+        }
+      }
+      await batch.commit();
+    }
+
+    await logActivity(
+      'customer',
+      'migration',
+      'update',
+      `Migrated ${updatedCount} customer(s) from legacy customer types to Customer Groups.`
+    );
+
+    await recalculateGroupCounters();
+    return { updatedCount };
   };
 
   // 7. Saved Filters
@@ -2400,6 +3085,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         softDeleteCustomer,
         logOutreach,
         importCustomersBatch,
+        undoCustomerImportBatch,
+        customerGroups,
+        loadingCustomerGroups,
+        groupCounters,
+        createCustomerGroup,
+        updateCustomerGroup,
+        archiveCustomerGroup,
+        restoreCustomerGroup,
+        mergeCustomerGroups,
+        deleteCustomerGroup,
+        createStarterGroups,
+        recalculateGroupCounters,
+        migrateOldCustomerTypesToGroups,
         tasks,
         loadingTasks,
         addTask,

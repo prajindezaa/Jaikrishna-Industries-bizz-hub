@@ -19,11 +19,11 @@ export function exportCustomersToExcel(customers: Customer[], filename = 'Jaikri
     'Primary Phone': formatPhoneDisplay(c.phone),
     'Normalized Phone': c.phone,
     'WhatsApp Number': formatPhoneDisplay(c.whatsapp),
+    'Customer Group': c.groupName || (c.groupId ? 'Assigned' : 'Ungrouped'),
     'Area': c.place.area,
     'City': c.place.city,
     'District': c.place.district,
     'State': c.place.state,
-    'Customer Type': c.customerType,
     'Status': c.status,
     'Lead Stage': c.leadStage,
     'Source': c.source,
@@ -64,7 +64,7 @@ export function exportCustomersToPDF(customers: Customer[], filename = 'Jaikrish
     c.contactPerson,
     formatPhoneDisplay(c.phone),
     `${c.place.city}, ${c.place.state}`,
-    c.customerType,
+    c.groupName || c.customerType || '—',
     c.status,
     c.leadStage,
     c.nextFollowUpDate || '—',
@@ -138,6 +138,7 @@ export function exportFullBackupExcel(data: {
     data.orders.map((o) => ({
       OrderNumber: o.orderNumber,
       CustomerName: o.customerName,
+      CustomerGroup: o.customerGroupName || 'Unknown',
       TotalAmount: o.totalAmount,
       PaymentStatus: o.paymentStatus,
       DeliveryStatus: o.deliveryStatus,
@@ -174,6 +175,7 @@ export function exportOrdersToExcel(orders: Order[], filename = 'Jaikrishna_Orde
     'Invoice Date': o.invoiceDate || o.orderDate,
     'Financial Year': o.financialYear || '—',
     'Customer Name': o.customerName,
+    'Customer Group': o.customerGroupName || 'Unknown',
     'City': o.customerCity || '—',
     'GSTIN': o.customerGstin || '—',
     'Total Bill Value (₹)': o.totalAmount,
@@ -218,6 +220,7 @@ export function exportOrdersToPDF(orders: Order[], filename = 'Jaikrishna_Orders
     o.invoiceNumber ? `#${o.invoiceNumber}` : '—',
     o.invoiceDate || o.orderDate,
     o.customerName,
+    o.customerGroupName || '—',
     o.customerCity || '—',
     `₹${o.totalAmount.toLocaleString('en-IN')}`,
     o.paymentStatus,
@@ -225,7 +228,7 @@ export function exportOrdersToPDF(orders: Order[], filename = 'Jaikrishna_Orders
   ]);
 
   autoTable(doc, {
-    head: [['#', 'Order #', 'Invoice #', 'Date', 'Customer', 'City', 'Bill Value', 'Payment', 'Dispatch']],
+    head: [['#', 'Order #', 'Invoice #', 'Date', 'Customer', 'Group', 'City', 'Bill Value', 'Payment', 'Dispatch']],
     body: tableData,
     startY: 26,
     theme: 'grid',
@@ -238,17 +241,17 @@ export function exportOrdersToPDF(orders: Order[], filename = 'Jaikrishna_Orders
 }
 
 /**
- * Generates and downloads a clean sample Excel template for customer import
+ * Generates and downloads a clean sample Excel template for customer import with Customer Group support
  */
-export function downloadCustomerImportTemplate() {
+export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: string; nameTa?: string }>) {
   const sampleData = [
     {
       'Company Name': 'Sri Ganesh Pooja Store',
       'Contact Person': 'Ganesh',
       'Phone': '9842154321',
+      'Customer Group': 'Wholesale Distributors',
       'City': 'Salem',
       'Area': 'Shevapet',
-      'Customer Type': 'Distributor',
       'Status': 'New customer',
       'Source': 'Meta Ads',
       'Notes': 'Needs bulk 50g camphor tablet cartons',
@@ -257,17 +260,28 @@ export function downloadCustomerImportTemplate() {
       'Company Name': 'Kovai Deepam Stores',
       'Contact Person': 'R. Sundaram',
       'Phone': '9443212345',
+      'Customer Group': 'Retailers & Pooja Shops',
       'City': 'Coimbatore',
       'Area': 'Town Hall',
-      'Customer Type': 'Wholesaler',
       'Status': 'New customer',
       'Source': 'Meta Ads',
       'Notes': 'Inquired about lamp oil 1L and sambrani cups',
     },
   ];
 
-  const worksheet = XLSX.utils.json_to_sheet(sampleData);
   const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(sampleData);
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Import_Template');
+
+  // If active customer groups are provided, append a reference sheet with available group names
+  if (activeGroups && activeGroups.length > 0) {
+    const groupsRefData = activeGroups.map((g) => ({
+      'Available Customer Group Name': g.name,
+      'Tamil Reference': g.nameTa || '',
+    }));
+    const refSheet = XLSX.utils.json_to_sheet(groupsRefData);
+    XLSX.utils.book_append_sheet(workbook, refSheet, 'Available_Groups_Reference');
+  }
+
   XLSX.writeFile(workbook, 'Jaikrishna_Customer_Import_Template.xlsx');
 }

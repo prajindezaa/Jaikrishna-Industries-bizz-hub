@@ -48,12 +48,34 @@ service cloud.firestore {
       allow create: if isAllowedMember() && 
         ('updatedBy' in request.resource.data) &&
         ('lastWriteSource' in request.resource.data) &&
-        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change']);
+        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change', 'system']);
       allow update: if isAllowedMember() && 
         ('updatedBy' in request.resource.data) &&
         ('lastWriteSource' in request.resource.data) &&
-        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change']);
+        (request.resource.data.lastWriteSource in ['manual_edit', 'manual_create', 'bulk_import', 'bulk_stage_change', 'system']);
       allow delete: if isAllowedMember();
+    }
+
+    // Customer Groups: allowlisted members can manage groups, soft delete only
+    match /customer_groups/{groupId} {
+      allow read: if isAllowedMember();
+      allow create, update: if isAllowedMember();
+      allow delete: if isAllowedMember();
+    }
+
+    // Customer Group Counters: client read-only; counters maintained atomically or via recalculation
+    match /customer_group_counters/{counterId} {
+      allow read: if isAllowedMember();
+      allow write: if isAllowedMember();
+    }
+
+    // Customer Import Batches & Undo Items
+    match /customer_import_batches/{batchId} {
+      allow read, write: if isAllowedMember();
+
+      match /items/{itemId} {
+        allow read, write: if isAllowedMember();
+      }
     }
 
     // Tasks & Follow-ups module: allowlisted members can manage tasks,
