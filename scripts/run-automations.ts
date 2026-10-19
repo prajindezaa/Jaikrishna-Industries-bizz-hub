@@ -35,7 +35,7 @@ async function sendEmailStub(to: string, subject: string, html: string): Promise
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnaindustries.com',
+        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnabizzhub.in',
         to: [to],
         subject,
         html,
