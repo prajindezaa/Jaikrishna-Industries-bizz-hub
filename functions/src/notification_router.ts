@@ -10,7 +10,7 @@
  * Guaranteed Invariants:
  * 1. AI assistant has ZERO write access to this engine.
  * 2. All times evaluated strictly against Asia/Kolkata timezone.
- * 3. EMAIL_ENABLED=false keeps email delivery disabled.
+ * 3. Email delivery powered by Resend (when configured and opted-in by team member).
  * 4. Atomic create-if-not-exists deduplication prevents check-then-create race conditions.
  * 5. Automatic pruning of expired/unregistered FCM tokens.
  * 6. Bundling applied when > 3 items of same category arrive in single run.
@@ -31,6 +31,7 @@ export interface NotificationIntent {
   bypassQuietHours?: boolean;
   minSpacingMinutes?: number;
   data?: Record<string, string>;
+  emailHtml?: string;
 }
 
 export interface RouterResult {
@@ -39,7 +40,7 @@ export interface RouterResult {
   channelsDelivered: string[];
 }
 
-export const EMAIL_ENABLED = false;
+export const EMAIL_ENABLED = true;
 
 export function isWithinQuietHours(
   currentTimeIST: string,
@@ -270,6 +271,69 @@ export async function routeNotificationIntent(
       }
     } catch (pushBatchErr) {
       console.error('[Router] Push dispatch error:', pushBatchErr);
+    }
+  }
+
+  // Channel C: Email Delivery via Resend (Respecting member preferences, daily cap, and global cap)
+  const emailAllowed = EMAIL_ENABLED && prefs?.channels?.email === true;
+  const resendApiKey = process.env.RESEND_API_KEY;
+
+  if (emailAllowed && resendApiKey) {
+    try {
+      const emailCapDoc = await db.collection('system_settings').doc(`email_counter_${todayStrIST}`).get();
+      const globalEmailCount = emailCapDoc.exists ? (emailCapDoc.data()?.count || 0) : 0;
+
+      // 80/day cap reserve for safety buffer (free tier limit 100/day)
+      if (globalEmailCount < 80) {
+        const fromEmail = process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnabizzhub.in';
+        const defaultHtml = `
+          <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
+            <h2 style="color: #881337; margin-top: 0;">${intent.title}</h2>
+            <p style="color: #374151; font-size: 14px; line-height: 1.5;">${intent.body}</p>
+            ${
+              intent.deepLink
+                ? `<p style="margin-top: 20px;">
+                    <a href="${(process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '')}${intent.deepLink}"
+                       style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; display: inline-block;">
+                      Open in Jaikrishna Hub
+                    </a>
+                   </p>`
+                : ''
+            }
+            <hr style="border: none; border-top: 1px solid #eee; margin-top: 24px;" />
+            <p style="font-size: 11px; color: #9ca3af; margin: 0;">Jaikrishna Industries Automated Business Hub · Salem, Tamil Nadu</p>
+          </div>
+        `;
+
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: fromEmail,
+            to: [recipientEmail],
+            subject: intent.title,
+            html: intent.emailHtml || defaultHtml,
+          }),
+        });
+
+        if (res.ok) {
+          channelsDelivered.push('email');
+          await db.collection('system_settings').doc(`email_counter_${todayStrIST}`).set(
+            { count: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() },
+            { merge: true }
+          );
+        } else {
+          const errText = await res.text();
+          console.warn(`[Router] Resend API responded ${res.status}:`, errText);
+        }
+      } else {
+        console.warn(`[Router] Global Resend email cap reached (${globalEmailCount}/80). Skipping email for ${recipientEmail}.`);
+      }
+    } catch (emailErr) {
+      console.error('[Router] Resend email dispatch error:', emailErr);
     }
   }
 

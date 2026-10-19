@@ -486,7 +486,7 @@ export interface MemberNotificationPreferences {
   channels: {
     inApp: boolean;
     push: boolean;
-    email: boolean; // Note: EMAIL_ENABLED=false keeps this inactive/hidden
+    email: boolean; // Production Resend email delivery channel
   };
   types: {
     perTask: boolean;

@@ -392,14 +392,36 @@ app.post('/api/test-email', standardRateLimiter, requireAuth, async (req: Authen
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnaindustries.com',
+        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnabizzhub.in',
         to: [targetEmail],
         subject: 'Test Notification — Jaikrishna Industries Hub',
-        html: '<p>This is a test notification from your Jaikrishna Industries business management system.</p>',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
+            <h2 style="color: #881337; margin-top: 0;">Vanakkam! Resend Integration Verified</h2>
+            <p style="color: #374151; font-size: 14px; line-height: 1.5;">This is a live test notification from your Jaikrishna Industries business management system at <strong>jaikrishnabizzhub.in</strong>.</p>
+            <p style="font-size: 12px; color: #6b7280; margin-top: 20px;">Delivered to: <strong>${targetEmail}</strong></p>
+            <hr style="border: none; border-top: 1px solid #eee; margin-top: 24px;" />
+            <p style="font-size: 11px; color: #9ca3af; margin: 0;">Jaikrishna Industries Automated Business Hub · Salem, Tamil Nadu</p>
+          </div>
+        `,
       }),
     });
     const result = await response.json();
-    res.json({ success: true, delivered: true, result });
+    if (!response.ok) {
+      res.status(response.status).json({
+        success: false,
+        delivered: false,
+        error: result?.message || 'Resend API returned error',
+        result,
+      });
+      return;
+    }
+    res.json({
+      success: true,
+      delivered: true,
+      message: `Test email dispatched successfully to ${targetEmail} via Resend.`,
+      result,
+    });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
   }

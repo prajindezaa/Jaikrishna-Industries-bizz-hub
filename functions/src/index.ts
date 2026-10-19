@@ -41,6 +41,7 @@ export {
   EMAIL_ENABLED,
 };
 export type { NotificationIntent } from './notification_router';
+export { sendResendEmail };
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
@@ -381,7 +382,7 @@ async function sendResendEmail(to: string, subject: string, html: string) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnaindustries.com',
+        from: process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnabizzhub.in',
         to: [to],
         subject,
         html,

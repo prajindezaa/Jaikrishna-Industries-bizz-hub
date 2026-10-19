@@ -54,6 +54,7 @@ export const SettingsView: React.FC = () => {
   const [prefs, setPrefs] = useState({
     pushEnabled: true,
     inAppEnabled: true,
+    emailEnabled: true,
     perTask: true,
     taskUncompleted: true,
     taskNotCreated: true,
@@ -83,6 +84,7 @@ export const SettingsView: React.FC = () => {
             setPrefs({
               pushEnabled: np.channels?.push !== false,
               inAppEnabled: np.channels?.inApp !== false,
+              emailEnabled: np.channels?.email !== false,
               perTask: np.types?.perTask !== false,
               taskUncompleted: np.types?.taskUncompleted !== false,
               taskNotCreated: np.types?.taskNotCreated !== false,
@@ -118,7 +120,7 @@ export const SettingsView: React.FC = () => {
             channels: {
               push: prefs.pushEnabled,
               inApp: prefs.inAppEnabled,
-              email: false, // EMAIL_ENABLED=false
+              email: prefs.emailEnabled,
             },
             types: {
               perTask: prefs.perTask,
@@ -268,10 +270,35 @@ export const SettingsView: React.FC = () => {
                 <Bell className="w-3.5 h-3.5 text-amber-800" />
                 <span>Send Test Push Notification</span>
               </button>
+              <button
+                onClick={handleTestEmail}
+                className="px-3 py-1.5 text-xs font-semibold text-stone-800 bg-stone-100 hover:bg-stone-200 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+              >
+                <Mail className="w-3.5 h-3.5 text-amber-800" />
+                <span>Send Test Email (Resend)</span>
+              </button>
             </div>
 
             {/* Toggles */}
             <div className="space-y-3 text-xs">
+              <label className="flex items-center justify-between cursor-pointer p-2 rounded-lg bg-stone-50 border border-stone-200/60">
+                <div>
+                  <div className="font-semibold text-stone-900 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-[#881337]" />
+                    <span>Email Delivery Channel (Resend)</span>
+                  </div>
+                  <div className="text-[11px] text-stone-500">
+                    Receive morning plans, overdue alerts, and operations summaries at <span className="font-mono text-stone-700">{user?.email}</span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={prefs.emailEnabled}
+                  onChange={(e) => setPrefs({ ...prefs, emailEnabled: e.target.checked })}
+                  className="rounded border-stone-300 text-amber-800 focus:ring-amber-800 w-4 h-4 cursor-pointer"
+                />
+              </label>
+
               <label className="flex items-center justify-between cursor-pointer">
                 <div>
                   <div className="font-semibold text-stone-900">Per-Task Nudges</div>
@@ -564,16 +591,16 @@ export const SettingsView: React.FC = () => {
           <div className="bg-white rounded-xl border border-stone-200/80 p-6 shadow-xs space-y-3">
             <div className="flex items-center gap-2 text-stone-900 font-bold text-sm font-display pb-2 border-b border-stone-100">
               <ShieldCheck className="w-4 h-4 text-emerald-700" />
-              <span>Resend SPF &amp; DKIM Setup Guide</span>
+              <span>Resend SPF &amp; DKIM Setup Guide (jaikrishnabizzhub.in)</span>
             </div>
             <div className="text-xs text-stone-600 space-y-2">
-              <p>To send delivery summaries and reminder emails from <code className="bg-stone-100 px-1 py-0.5 rounded text-[11px] text-stone-800">reminders@jaikrishnaindustries.com</code>, add these DNS records to your domain host (GoDaddy / Cloudflare / Namecheap):</p>
+              <p>To send delivery summaries and reminder emails from <code className="bg-stone-100 px-1 py-0.5 rounded text-[11px] text-stone-800">reminders@jaikrishnabizzhub.in</code>, add these DNS records to your DNS provider (Vercel / GoDaddy):</p>
               <div className="bg-stone-50 p-2.5 rounded-lg border border-stone-200 font-mono text-[11px] space-y-1.5 text-stone-700 overflow-x-auto">
                 <div><strong>1. DKIM (TXT):</strong> Host: <span className="text-[#881337]">resend._domainkey</span> · Value: <span className="text-stone-500">p=MIGf... (from resend.com/domains)</span></div>
                 <div><strong>2. SPF (TXT):</strong> Host: <span className="text-[#881337]">send</span> · Value: <span className="text-stone-500">v=spf1 include:amazonses.com ~all</span></div>
                 <div><strong>3. Return-Path (MX):</strong> Host: <span className="text-[#881337]">send</span> · Value: <span className="text-stone-500">feedback-smtp.us-east-1.amazonses.com (Priority 10)</span></div>
               </div>
-              <p className="text-[11px] text-stone-500">Once verified in Resend dashboard, delivery arrives straight to member inboxes without spam filtering.</p>
+              <p className="text-[11px] text-stone-500">Once verified in your Resend dashboard (status: Verified), emails arrive directly in your team's inbox with zero spam filtering.</p>
             </div>
           </div>
 
