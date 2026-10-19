@@ -141,7 +141,7 @@ export const AssistantView: React.FC = () => {
           description: g.description,
           customerCount: customers.filter((c) => c.groupId === g.id && !c.isDeleted).length,
         })),
-      customers: customers.slice(0, 30).map((c) => ({
+      customers: customers.slice(0, 200).map((c) => ({
         id: c.id,
         companyName: c.companyName,
         contactPerson: c.contactPerson,

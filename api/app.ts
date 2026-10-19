@@ -779,6 +779,43 @@ function getSmartAssistantFallback(message: string, context: any): string {
   const notificationSettings = context?.notificationSettings || {};
   const metaAds = context?.metaAds || [];
   const festivalEvents = context?.festivalEvents || [];
+  const customerGroups = context?.customerGroups || [];
+
+  // Customer Groups matching
+  if (q.includes('group') || q.includes('wholesaler') || q.includes('distributor') || q.includes('retailer') || q.includes('segment')) {
+    // If asking about a specific group or group list
+    if (q.includes('list') || q.includes('tell') || q.includes('show') || q.includes('customer')) {
+      // Find matching group or default to wholesale/distributor
+      let matchedGroup = customerGroups.find((g: any) =>
+        (g.name && q.includes(g.name.toLowerCase())) ||
+        (g.nameTa && q.includes(g.nameTa.toLowerCase()))
+      );
+
+      if (!matchedGroup && (q.includes('wholesaler') || q.includes('wholesale') || q.includes('distributor'))) {
+        matchedGroup = customerGroups.find((g: any) =>
+          g.name.toLowerCase().includes('wholesale') || g.name.toLowerCase().includes('distributor')
+        ) || customerGroups[0];
+      }
+
+      if (matchedGroup) {
+        const groupCustomers = customers.filter((c: any) => 
+          (c.groupName && c.groupName.toLowerCase() === matchedGroup.name.toLowerCase()) ||
+          (c.groupId && c.groupId === matchedGroup.id)
+        );
+        const customerList = groupCustomers.length > 0
+          ? groupCustomers.map((c: any) => `- **${c.companyName}** (${c.contactPerson || 'Contact'} - ${c.city || 'Tamil Nadu'}) · Phone: ${c.phone || 'N/A'}`).join('\n')
+          : `No customers currently assigned to "${matchedGroup.name}".`;
+
+        return `Vanakkam! Here is the customer list for **${matchedGroup.name}** (${matchedGroup.nameTa || ''}) [Total: ${groupCustomers.length} customer(s)]:\n\n${customerList}\n\nYou can also filter or manage these customers in the Customers Hub under the "${matchedGroup.name}" tab.`;
+      }
+
+      // If general groups breakdown requested
+      if (customerGroups.length > 0) {
+        const groupsBreakdown = customerGroups.map((g: any) => `- **${g.name}** (${g.nameTa || ''}): ${g.customerCount ?? 0} customers`).join('\n');
+        return `Vanakkam! Here is the breakdown of your active Customer Groups:\n\n${groupsBreakdown}\n\nAsk for any specific group name (e.g. "Show Wholesale Distributors customers") to view individual shop names and phone numbers.`;
+      }
+    }
+  }
 
   if (q.includes('lowest cost') || q.includes('cheapest conversation') || q.includes('cost per conversation')) {
     const fulfilled = metaAds.filter((a: any) => a.results && (a.results.costPerConversation || a.results.conversations > 0));
@@ -922,28 +959,51 @@ CRITICAL OPERATIONAL INVARIANTS:
 CURRENT WORKSPACE CONTEXT:
 ${context ? JSON.stringify(context, null, 2) : 'No live workspace context provided.'}`;
 
-    const apiPromise = ai.models.generateContent({
-      model: modelName,
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }],
-        },
-      ],
-    });
+    // Multi-model resilient fallback chain for production reliability
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    const fallbackModels = [primaryModel, 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.8-flash']
+      .filter((m, idx, arr) => arr.indexOf(m) === idx);
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Gemini API timeout (6s)')), 6000)
-    );
+    let lastError: any = null;
+    let chosenModel = primaryModel;
+    let replyText: string | null = null;
 
-    const response: any = await Promise.race([apiPromise, timeoutPromise]);
-    // In @google/genai v2, .text is a getter on the response object
-    const replyText = (typeof response?.text === 'string' ? response.text : null)
-      || getSmartAssistantFallback(message, context);
+    for (const modelToTry of fallbackModels) {
+      try {
+        const apiPromise = ai.models.generateContent({
+          model: modelToTry,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }],
+            },
+          ],
+        });
+
+        // 12-second timeout allows sufficient time for complete responses
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Gemini API timeout (12s) on ${modelToTry}`)), 12000)
+        );
+
+        const response: any = await Promise.race([apiPromise, timeoutPromise]);
+        if (typeof response?.text === 'string' && response.text.trim()) {
+          replyText = response.text.trim();
+          chosenModel = modelToTry;
+          break; // Succeeded!
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Gemini Assistant] Model ${modelToTry} attempt failed, trying fallback:`, err?.message || String(err));
+      }
+    }
+
+    if (!replyText) {
+      throw lastError || new Error('All Gemini model fallbacks exhausted');
+    }
 
     res.json({
       success: true,
-      modelUsed: modelName,
+      modelUsed: chosenModel,
       isAiGenerated: true,
       reply: replyText,
     });
