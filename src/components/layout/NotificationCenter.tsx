@@ -179,8 +179,30 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     earlier: [],
   };
 
+  const getNotificationDateStr = (createdAt: any): string => {
+    if (!createdAt) return '';
+    try {
+      if (typeof createdAt === 'string') return createdAt.slice(0, 10);
+      if (typeof createdAt?.toDate === 'function') {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(createdAt.toDate());
+      }
+      if (typeof createdAt?.toMillis === 'function') {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(createdAt.toMillis()));
+      }
+      if (createdAt instanceof Date) {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(createdAt);
+      }
+      if (typeof createdAt === 'number') {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(createdAt));
+      }
+    } catch {
+      return '';
+    }
+    return '';
+  };
+
   filtered.forEach((n) => {
-    const dStr = (n.createdAt || '').slice(0, 10);
+    const dStr = getNotificationDateStr(n.createdAt);
     if (dStr === todayStr) grouped.today.push(n);
     else if (dStr === yesterdayStr) grouped.yesterday.push(n);
     else grouped.earlier.push(n);
@@ -234,7 +256,17 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             {n.body}
           </p>
           <div className="flex items-center gap-2 mt-1.5 text-[10px] text-stone-400 font-mono">
-            <span>{new Date(n.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>
+              {(() => {
+                try {
+                  const d = (n.createdAt as any)?.toDate?.() || 
+                    ((n.createdAt as any)?.toMillis ? new Date((n.createdAt as any).toMillis()) : new Date(n.createdAt));
+                  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } catch {
+                  return '';
+                }
+              })()}
+            </span>
             {n.deepLink && (
               <span className="text-amber-800 font-sans inline-flex items-center gap-0.5 hover:underline">
                 View <ChevronRight className="w-2.5 h-2.5" />

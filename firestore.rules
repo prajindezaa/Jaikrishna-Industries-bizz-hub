@@ -175,5 +175,10 @@ service cloud.firestore {
       allow read: if isAllowedMember();
       allow write: if false; // Cloud Functions & Admin SDK only
     }
+
+    // Offers & Promotion campaigns
+    match /offers/{offerId} {
+      allow read, write: if isAllowedMember();
+    }
   }
 }
