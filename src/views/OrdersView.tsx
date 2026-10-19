@@ -19,19 +19,28 @@ import {
   Loader2,
   Sparkles,
 } from 'lucide-react';
-import { Order, OrderItem, Product } from '../types';
+import { Order, OrderItem, Product, Customer, CustomerStatus } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp, POOJA_PRODUCTS } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { exportOrdersToExcel, exportOrdersToPDF } from '../lib/export';
+import { InvoiceUploadReviewModal, InvoiceReviewItem } from '../components/orders/InvoiceUploadReviewModal';
+import { OrderDetailModal } from '../components/orders/OrderDetailModal';
+import { calculateFinancialYear } from '../lib/invoice-parser';
+import { Upload, Download, Eye } from 'lucide-react';
 
 export const OrdersView: React.FC = () => {
   const { t } = useLanguage();
   const { member } = useAuth();
-  const { orders, loadingOrders, customers, createOrderTransaction, softDeleteOrder } = useApp();
+  const { orders, loadingOrders, customers, createOrderTransaction, softDeleteOrder, addCustomer } = useApp();
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = useState<Order | null>(null);
   const [search, setSearch] = useState('');
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<string>('All');
+  const [selectedDeliveryStatus, setSelectedDeliveryStatus] = useState<string>('All');
+  const [selectedCity, setSelectedCity] = useState<string>('All');
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -44,6 +53,70 @@ export const OrdersView: React.FC = () => {
   const [paymentStatus, setPaymentStatus] = useState<Order['paymentStatus']>('Paid');
   const [deliveryStatus, setDeliveryStatus] = useState<Order['deliveryStatus']>('Pending');
   const [orderNotes, setOrderNotes] = useState('');
+
+  // Handle Confirm Order from Invoice Upload Modal
+  const handleConfirmInvoiceOrder = async (item: InvoiceReviewItem) => {
+    const fy = calculateFinancialYear(item.invoiceDate);
+    const prod = POOJA_PRODUCTS[0];
+
+    await createOrderTransaction({
+      invoiceNumber: item.invoiceNumber.trim(),
+      invoiceDate: item.invoiceDate,
+      financialYear: fy,
+      customerId: item.selectedCustomerId,
+      customerName: item.customerName,
+      customerGstin: item.customerGstin,
+      customerAddress: item.customerAddress,
+      customerCity: item.customerCity,
+      items: [
+        {
+          productId: prod.id,
+          productName: `Invoice #${item.invoiceNumber} Wholesale Goods`,
+          quantity: 1,
+          unitPrice: item.totalAmount,
+          total: item.totalAmount,
+        },
+      ],
+      subtotal: item.totalAmount,
+      discount: 0,
+      totalAmount: item.totalAmount,
+      paymentStatus: 'Unpaid',
+      deliveryStatus: 'Pending',
+      orderDate: item.invoiceDate,
+      paymentDueDate: item.invoiceDate, // immediate (0 days credit)
+      paidAmount: 0,
+      outstandingAmount: item.totalAmount,
+      invoiceFileName: item.file.name,
+      notes: item.notes.trim() || `Imported from Tax Invoice #${item.invoiceNumber}`,
+      recordedBy: member?.email || 'prajindezaa142@gmail.com',
+    });
+
+    setSuccessToast(
+      `Order created from Invoice #${item.invoiceNumber} for ₹${item.totalAmount.toLocaleString('en-IN')} (${item.customerName})!`
+    );
+    setTimeout(() => setSuccessToast(null), 5000);
+  };
+
+  // Handle Add New Customer from Invoice Upload Modal
+  const handleAddNewCustomerFromInvoice = async (data: Partial<Customer>): Promise<string> => {
+    return await addCustomer({
+      companyName: data.companyName || 'New Customer',
+      contactPerson: data.contactPerson || data.companyName || 'New Contact',
+      phone: data.phone || '',
+      whatsapp: data.whatsapp || '',
+      place: data.place || { area: '', city: data.city || 'Tamil Nadu', district: data.city || 'Tamil Nadu', state: 'Tamil Nadu' },
+      address: data.address || '',
+      city: data.city || '',
+      gstin: data.gstin || '',
+      customerType: data.customerType || 'Retailer',
+      status: (data.status as CustomerStatus) || 'New customer',
+      source: 'Other',
+      leadStage: 'New',
+      assignedTo: member?.email || 'prajindezaa142@gmail.com',
+      tags: data.tags || ['Invoice Import'],
+      notes: data.notes || '',
+    });
+  };
 
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,16 +168,26 @@ export const OrdersView: React.FC = () => {
     }
   };
 
+  const distinctCities = Array.from(
+    new Set(orders.map((o) => o.customerCity).filter(Boolean))
+  ) as string[];
+
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
       o.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = selectedPaymentStatus === 'All' || o.paymentStatus === selectedPaymentStatus;
-    return matchesSearch && matchesStatus && !o.isDeleted;
+      o.customerName.toLowerCase().includes(search.toLowerCase()) ||
+      (o.invoiceNumber && o.invoiceNumber.toLowerCase().includes(search.toLowerCase())) ||
+      (o.customerCity && o.customerCity.toLowerCase().includes(search.toLowerCase()));
+
+    const matchesPayment = selectedPaymentStatus === 'All' || o.paymentStatus === selectedPaymentStatus;
+    const matchesDelivery = selectedDeliveryStatus === 'All' || o.deliveryStatus === selectedDeliveryStatus;
+    const matchesCity = selectedCity === 'All' || o.customerCity === selectedCity;
+
+    return matchesSearch && matchesPayment && matchesDelivery && matchesCity && !o.isDeleted;
   });
 
-  const totalRevenue = orders.reduce((acc, o) => acc + (o.paymentStatus === 'Paid' ? o.totalAmount : 0), 0);
-  const pendingRevenue = orders.reduce((acc, o) => acc + (o.paymentStatus !== 'Paid' ? o.totalAmount : 0), 0);
+  const totalRevenue = orders.reduce((acc, o) => acc + (o.paymentStatus === 'Paid' ? o.totalAmount : (o.paidAmount || 0)), 0);
+  const pendingRevenue = orders.reduce((acc, o) => acc + (o.outstandingAmount || (o.paymentStatus !== 'Paid' ? o.totalAmount : 0)), 0);
 
   return (
     <div className="space-y-6">
@@ -120,26 +203,58 @@ export const OrdersView: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-stone-700 mt-1">
-            Atomic Firestore transactions automatically update customer revenue, order count, and promote lead stage.
+            Upload born-digital invoice PDFs for automatic extraction, or record manual wholesale orders.
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            if (customers.length === 0) {
-              alert('Please add or seed customer leads before recording an order.');
-              return;
-            }
-            if (!selectedCustomerId && customers[0]) {
-              setSelectedCustomerId(customers[0].id);
-            }
-            setShowAddModal(true);
-          }}
-          className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] flex items-center gap-1.5 shadow-sm transition-colors self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          Create New Order
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Excel Export */}
+          <button
+            onClick={() => exportOrdersToExcel(filteredOrders)}
+            className="px-3 py-2 text-xs font-semibold rounded-lg border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 flex items-center gap-1.5 shadow-xs transition-colors"
+            title="Export orders to Excel workbook"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            Excel
+          </button>
+
+          {/* PDF Export */}
+          <button
+            onClick={() => exportOrdersToPDF(filteredOrders)}
+            className="px-3 py-2 text-xs font-semibold rounded-lg border border-stone-300 bg-white text-stone-700 hover:bg-stone-50 flex items-center gap-1.5 shadow-xs transition-colors"
+            title="Export orders to printable PDF directory"
+          >
+            <Download className="w-3.5 h-3.5 text-rose-600" />
+            PDF
+          </button>
+
+          {/* Upload Invoice Button */}
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="px-3.5 py-2 text-xs font-bold rounded-lg border border-[#881337]/30 bg-[#881337]/10 text-[#881337] hover:bg-[#881337]/20 flex items-center gap-1.5 transition-colors shadow-xs"
+          >
+            <Upload className="w-4 h-4" />
+            Upload Invoice PDF
+          </button>
+
+          {/* Manual Order Creation */}
+          <button
+            onClick={() => {
+              if (customers.length === 0) {
+                alert('Please add or seed customer leads before recording an order.');
+                return;
+              }
+              if (!selectedCustomerId && customers[0]) {
+                setSelectedCustomerId(customers[0].id);
+              }
+              setShowAddModal(true);
+            }}
+            className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] flex items-center gap-1.5 shadow-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Create Manual Order
+          </button>
+        </div>
       </div>
 
       {/* Success Notification */}
@@ -189,25 +304,67 @@ export const OrdersView: React.FC = () => {
           <Search className="w-4 h-4 text-stone-400 shrink-0" />
           <input
             type="text"
-            placeholder="Search by order number or customer name..."
+            placeholder="Search by order #, invoice #, customer name, city..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-transparent text-xs text-stone-800 focus:outline-hidden placeholder:text-stone-400"
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-stone-500" />
-          <select
-            value={selectedPaymentStatus}
-            onChange={(e) => setSelectedPaymentStatus(e.target.value)}
-            className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
-          >
-            <option value="All">All Payments</option>
-            <option value="Paid">Paid</option>
-            <option value="Pending">Pending</option>
-            <option value="Credit">Credit</option>
-          </select>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Payment Status Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-medium text-stone-500">Payment:</span>
+            <select
+              value={selectedPaymentStatus}
+              onChange={(e) => setSelectedPaymentStatus(e.target.value)}
+              className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
+            >
+              <option value="All">All Payments</option>
+              <option value="Paid">Paid</option>
+              <option value="Partial">Partial</option>
+              <option value="Unpaid">Unpaid</option>
+              <option value="Pending">Pending</option>
+              <option value="Credit">Credit</option>
+            </select>
+          </div>
+
+          {/* Delivery Status Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-medium text-stone-500">Dispatch:</span>
+            <select
+              value={selectedDeliveryStatus}
+              onChange={(e) => setSelectedDeliveryStatus(e.target.value)}
+              className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
+            >
+              <option value="All">All Dispatches</option>
+              <option value="Pending">Pending</option>
+              <option value="Packed">Packed</option>
+              <option value="Dispatched">Dispatched</option>
+              <option value="Delivered">Delivered</option>
+              <option value="On hold">On hold</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          {/* City Filter */}
+          {distinctCities.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-stone-500">City:</span>
+              <select
+                value={selectedCity}
+                onChange={(e) => setSelectedCity(e.target.value)}
+                className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
+              >
+                <option value="All">All Cities</option>
+                {distinctCities.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -224,14 +381,22 @@ export const OrdersView: React.FC = () => {
           </div>
           <h3 className="text-base font-bold text-stone-800 mb-1">No orders found</h3>
           <p className="text-xs text-stone-500 max-w-sm mx-auto mb-4">
-            Record a pooja products wholesale order to atomically update customer revenue and promote lead stage.
+            Upload an invoice PDF or record a wholesale order to atomically update customer revenue and promote lead stage.
           </p>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] shadow-sm"
-          >
-            Create First Order
-          </button>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="px-4 py-2 text-xs font-bold rounded-lg border border-[#881337]/30 bg-[#881337]/10 text-[#881337] hover:bg-[#881337]/20 shadow-xs"
+            >
+              Upload Invoice PDF
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2 text-xs font-bold rounded-lg bg-[#881337] text-white hover:bg-[#70102e] shadow-sm"
+            >
+              Create Manual Order
+            </button>
+          </div>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-stone-200 overflow-hidden shadow-xs">
@@ -240,10 +405,10 @@ export const OrdersView: React.FC = () => {
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Order #</th>
-                  <th className="py-3 px-4">Customer</th>
-                  <th className="py-3 px-4">Items Summary</th>
+                  <th className="py-3 px-4">Invoice #</th>
+                  <th className="py-3 px-4">Customer &amp; City</th>
                   <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Total Amount</th>
+                  <th className="py-3 px-4">Bill Value</th>
                   <th className="py-3 px-4">Payment</th>
                   <th className="py-3 px-4">Dispatch</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -251,13 +416,33 @@ export const OrdersView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-stone-100 text-stone-800">
                 {filteredOrders.map((ord) => (
-                  <tr key={ord.id} className="hover:bg-amber-50/40 transition-colors">
+                  <tr
+                    key={ord.id}
+                    onClick={() => setSelectedOrderForDetail(ord)}
+                    className="hover:bg-amber-50/60 cursor-pointer transition-colors"
+                  >
                     <td className="py-3 px-4 font-mono font-bold text-[#881337]">{ord.orderNumber}</td>
-                    <td className="py-3 px-4 font-medium text-stone-900">{ord.customerName}</td>
-                    <td className="py-3 px-4 text-stone-600">
-                      {ord.items.map((i) => `${i.productName} (×${i.quantity})`).join(', ')}
+                    <td className="py-3 px-4 font-mono font-bold text-stone-800">
+                      {ord.invoiceNumber ? (
+                        <span className="px-2 py-0.5 rounded-md bg-stone-100 border border-stone-200">
+                          #{ord.invoiceNumber}
+                        </span>
+                      ) : (
+                        <span className="text-stone-400">—</span>
+                      )}
                     </td>
-                    <td className="py-3 px-4 text-stone-500 font-mono text-[11px]">{ord.orderDate}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-semibold text-stone-900">{ord.customerName}</div>
+                      {ord.customerCity && (
+                        <div className="text-[10px] text-stone-500">{ord.customerCity}</div>
+                      )}
+                      {ord.customerGstin && (
+                        <div className="text-[10px] font-mono text-stone-400">GST: {ord.customerGstin}</div>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-stone-500 font-mono text-[11px]">
+                      {ord.invoiceDate || ord.orderDate}
+                    </td>
                     <td className="py-3 px-4 font-mono font-bold text-stone-900">
                       ₹{ord.totalAmount.toLocaleString('en-IN')}
                     </td>
@@ -266,7 +451,9 @@ export const OrdersView: React.FC = () => {
                         className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                           ord.paymentStatus === 'Paid'
                             ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                            : 'bg-amber-100 text-amber-900 border-amber-300'
+                            : ord.paymentStatus === 'Partial'
+                            ? 'bg-amber-100 text-amber-900 border-amber-300'
+                            : 'bg-rose-100 text-rose-900 border-rose-300'
                         }`}
                       >
                         {ord.paymentStatus}
@@ -278,17 +465,26 @@ export const OrdersView: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Move order "${ord.orderNumber}" to trash?`)) {
-                            softDeleteOrder(ord.id);
-                          }
-                        }}
-                        className="p-1 text-stone-400 hover:text-rose-600 rounded transition-colors"
-                        title="Move to trash"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => setSelectedOrderForDetail(ord)}
+                          className="p-1 text-stone-500 hover:text-[#881337] hover:bg-stone-100 rounded transition-colors"
+                          title="View order, dispatch & payments"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Move order "${ord.orderNumber}" to trash?`)) {
+                              softDeleteOrder(ord.id);
+                            }
+                          }}
+                          className="p-1 text-stone-400 hover:text-rose-600 rounded transition-colors"
+                          title="Move to trash"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -297,6 +493,23 @@ export const OrdersView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Order Detail & Dispatch / Payment Modal */}
+      <OrderDetailModal
+        order={selectedOrderForDetail}
+        isOpen={Boolean(selectedOrderForDetail)}
+        onClose={() => setSelectedOrderForDetail(null)}
+      />
+
+      {/* Invoice Upload & Review Modal */}
+      <InvoiceUploadReviewModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        customers={customers}
+        existingOrders={orders}
+        onConfirmOrder={handleConfirmInvoiceOrder}
+        onAddNewCustomer={handleAddNewCustomerFromInvoice}
+      />
 
       {/* New Order Modal */}
       {showAddModal && (

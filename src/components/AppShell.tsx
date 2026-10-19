@@ -52,7 +52,7 @@ export const AppShell: React.FC<AppShellProps> = ({
 }) => {
   const { member, signOut } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
-  const { tasks, customers, metaAds } = useApp();
+  const { tasks, customers, metaAds, orders } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -68,6 +68,12 @@ export const AppShell: React.FC<AppShellProps> = ({
   ).length;
   const adsWaitingResultsCount = metaAds.filter(
     (a) => !a.isDeleted && a.stage === 'Waiting for result'
+  ).length;
+  const pendingDispatchCount = orders.filter(
+    (o) => !o.isDeleted && (o.deliveryStatus === 'Pending' || o.deliveryStatus === 'Packed')
+  ).length;
+  const overduePaymentsCount = orders.filter(
+    (o) => !o.isDeleted && (o.paymentStatus === 'Unpaid' || o.paymentStatus === 'Partial' || o.paymentStatus === 'Credit') && o.paymentDueDate && o.paymentDueDate <= todayStr
   ).length;
 
   // Global Keyboard Shortcuts (N = New Customer, T = New Task, / = Search, Ctrl/Cmd+K = Palette)
@@ -202,6 +208,9 @@ export const AppShell: React.FC<AppShellProps> = ({
               } else if (item.id === 'customers' && followupsDueCount > 0) {
                 badgeCount = followupsDueCount;
                 badgeColor = 'bg-amber-600 text-white';
+              } else if (item.id === 'orders' && pendingDispatchCount > 0) {
+                badgeCount = pendingDispatchCount;
+                badgeColor = 'bg-rose-600 text-white';
               }
 
               return (

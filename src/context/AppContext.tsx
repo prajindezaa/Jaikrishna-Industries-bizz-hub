@@ -28,6 +28,7 @@ import {
   Customer,
   Task,
   Order,
+  OrderStatusHistoryEntry,
   Plan,
   ActivityLog,
   CustomerStatus,
@@ -101,6 +102,9 @@ interface AppContextType {
   orders: Order[];
   loadingOrders: boolean;
   createOrderTransaction: (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt' | 'isDeleted'>) => Promise<string>;
+  changeOrderDeliveryStatus: (orderId: string, nextStatus: Order['deliveryStatus'], reason?: string) => Promise<void>;
+  updateOrderDispatch: (orderId: string, dispatchDetails: Order['dispatch']) => Promise<void>;
+  recordOrderPayment: (orderId: string, payment: { amount: number; mode: 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque'; reference?: string; date: string }) => Promise<void>;
   softDeleteOrder: (id: string) => Promise<void>;
 
   // Plans (Phase 5A)
@@ -592,15 +596,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<string> => {
     if (!db) throw new Error('Firestore not initialized');
 
-    const normalized = normalizePhone(data.phone);
-    if (!normalized) {
-      throw new Error('Invalid phone number format. Please check the digits.');
-    }
+    let normalized = '';
+    const isPhoneMissing = !data.phone || data.phone.trim() === '';
 
-    // Duplicate check on normalized phone
-    const existing = customers.find((c) => c.phone === normalized);
-    if (existing) {
-      throw new Error(`Customer with phone ${normalized} already exists: "${existing.companyName}" (${existing.place.city})`);
+    if (!isPhoneMissing) {
+      normalized = normalizePhone(data.phone);
+      if (!normalized) {
+        throw new Error('Invalid phone number format. Please check the digits.');
+      }
+
+      // Duplicate check on normalized phone
+      const existing = customers.find((c) => c.phone === normalized && !c.isDeleted);
+      if (existing) {
+        throw new Error(`Customer with phone ${normalized} already exists: "${existing.companyName}" (${existing.place.city})`);
+      }
     }
 
     const now = new Date().toISOString();
@@ -610,6 +619,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newDocRef.id,
       phone: normalized,
       whatsapp: data.whatsapp ? normalizePhone(data.whatsapp) || normalized : normalized,
+      isPhoneMissing,
       totalOrdersCount: 0,
       totalRevenue: 0,
       statusHistory: [
@@ -618,7 +628,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           to: data.status,
           changedBy: member?.email || 'admin',
           changedAt: now,
-          reason: 'Initial creation',
+          reason: isPhoneMissing ? 'Created from invoice without phone number' : 'Initial creation',
         },
       ],
       stageHistory: [{
@@ -635,7 +645,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     await setDoc(newDocRef, customerObj);
-    await logActivity('customer', newDocRef.id, 'create', `Created customer: ${customerObj.companyName} (${customerObj.place.city})`);
+    await logActivity(
+      'customer',
+      newDocRef.id,
+      'create',
+      `Created customer: ${customerObj.companyName} (${customerObj.place.city})${isPhoneMissing ? ' [Phone Missing]' : ''}`
+    );
+
+    // If phone is missing, create a task to add phone
+    if (isPhoneMissing) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const taskRef = doc(collection(db, 'tasks'));
+      const phoneTask: Task = {
+        id: taskRef.id,
+        title: `Add phone for ${customerObj.companyName}`,
+        description: `Customer was created from an invoice without a phone number. Collect and enter their contact number for WhatsApp & calls.`,
+        customerId: newDocRef.id,
+        customerName: customerObj.companyName,
+        type: 'Other',
+        assignedTo: member?.email || user?.email || 'prajindezaa142@gmail.com',
+        priority: 'Medium',
+        date: todayStr,
+        startTime: '10:00',
+        endTime: '10:30',
+        repeat: 'None',
+        status: 'Pending',
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await setDoc(taskRef, phoneTask);
+    }
+
     return newDocRef.id;
   };
 
@@ -1020,13 +1061,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newRevenue = prevRevenue + orderData.totalAmount;
 
       // 1. Prepare Order Document
+      const initialPaidAmount = orderData.paymentStatus === 'Paid' ? orderData.totalAmount : (orderData.paidAmount || 0);
+      const initialOutstanding = Math.max(0, orderData.totalAmount - initialPaidAmount);
+
+      const initialStatusHistory: OrderStatusHistoryEntry[] = orderData.statusHistory || [
+        {
+          status: orderData.deliveryStatus || 'Pending',
+          changedAt: now,
+          changedBy: member?.email || user?.email || 'admin',
+          reason: orderData.invoiceNumber ? `Created from Invoice #${orderData.invoiceNumber}` : 'Manual order creation',
+        },
+      ];
+
       const newOrder: Order = {
         ...orderData,
         id: orderRef.id,
         orderNumber,
+        paidAmount: initialPaidAmount,
+        outstandingAmount: initialOutstanding,
+        statusHistory: initialStatusHistory,
         recordedBy: member?.email || user?.email || 'admin',
         isDeleted: false,
         createdAt: now,
+        updatedAt: now,
       };
 
       // 2. Customer updates: totalOrdersCount, totalRevenue, promote status to "Old customer", leadStage to "Ordered"
@@ -1050,9 +1107,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const existingTags: string[] = custData.tags || [];
       const updatedTags = existingTags.filter(t => t !== 'Cold' && t !== 'Cold Lead' && t !== 'Reorder overdue');
 
-      // Execute transaction writes
-      transaction.set(orderRef, newOrder);
-      transaction.update(customerRef, {
+      const customerUpdates: Record<string, any> = {
         totalOrdersCount: newOrdersCount,
         totalRevenue: newRevenue,
         status: 'Old customer',
@@ -1062,7 +1117,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastWriteSource: 'manual_edit',
         updatedBy: member?.email || user?.email || 'admin',
         updatedAt: now,
-      });
+      };
+
+      // If customer is missing GSTIN or address/city, sync from invoice
+      if (orderData.customerGstin && !custData.gstin) {
+        customerUpdates.gstin = orderData.customerGstin;
+      }
+      if (orderData.customerAddress && !custData.address) {
+        customerUpdates.address = orderData.customerAddress;
+      }
+      if (orderData.customerCity && (!custData.place?.city || custData.place.city === 'Tamil Nadu')) {
+        customerUpdates.place = {
+          ...custData.place,
+          city: orderData.customerCity,
+          district: custData.place?.district || orderData.customerCity,
+        };
+      }
+
+      // Execute transaction writes
+      transaction.set(orderRef, newOrder);
+      transaction.update(customerRef, customerUpdates);
     });
 
     await logActivity(
@@ -1078,6 +1152,128 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return orderRef.id;
+  };
+
+  const updateOrderDispatch = async (
+    orderId: string,
+    dispatchDetails: Order['dispatch']
+  ): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, 'orders', orderId), {
+      dispatch: dispatchDetails,
+      updatedAt: now,
+    });
+    await logActivity('order', orderId, 'update', `Updated dispatch details for Order ${orderId}`);
+  };
+
+  const changeOrderDeliveryStatus = async (
+    orderId: string,
+    nextStatus: Order['deliveryStatus'],
+    reason?: string
+  ): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) throw new Error('Order not found');
+
+    const now = new Date().toISOString();
+    const historyEntry = {
+      status: nextStatus,
+      changedAt: now,
+      changedBy: member?.email || user?.email || 'admin',
+      reason: reason || `Status changed to ${nextStatus}`,
+    };
+
+    const nextHistory = [historyEntry, ...(order.statusHistory || [])];
+
+    await updateDoc(doc(db, 'orders', orderId), {
+      deliveryStatus: nextStatus,
+      statusHistory: nextHistory,
+      updatedAt: now,
+    });
+
+    await logActivity(
+      'order',
+      orderId,
+      'update',
+      `Changed Order ${order.orderNumber} delivery status to ${nextStatus}`
+    );
+
+    // If order reached Delivered, create automated feedback task for customer
+    if (nextStatus === 'Delivered') {
+      const taskRef = doc(collection(db, 'tasks'));
+      const deliveryDate = new Date();
+      deliveryDate.setDate(deliveryDate.getDate() + 2); // default 2 days after delivery
+      const dueStr = deliveryDate.toISOString().slice(0, 10);
+
+      const feedbackTask = {
+        id: taskRef.id,
+        title: `Call ${order.customerName} for feedback`,
+        description: `Order ${order.orderNumber} (Invoice #${order.invoiceNumber || '—'}) delivered. Call customer to check goods delivery and satisfaction.`,
+        customerId: order.customerId,
+        customerName: order.customerName,
+        type: 'Call' as const,
+        assignedTo: order.recordedBy || member?.email || 'prajindezaa142@gmail.com',
+        priority: 'Medium' as const,
+        date: dueStr,
+        startTime: '11:00',
+        endTime: '11:30',
+        repeat: 'None' as const,
+        status: 'Pending' as const,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await setDoc(taskRef, feedbackTask);
+    }
+  };
+
+  const recordOrderPayment = async (
+    orderId: string,
+    payment: {
+      amount: number;
+      mode: 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque';
+      reference?: string;
+      date: string;
+    }
+  ): Promise<void> => {
+    if (!db) throw new Error('Firestore not initialized');
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) throw new Error('Order not found');
+
+    const now = new Date().toISOString();
+    const currentPaid = order.paidAmount || 0;
+    const newPaid = currentPaid + payment.amount;
+    const newOutstanding = Math.max(0, order.totalAmount - newPaid);
+    const newPaymentStatus: Order['paymentStatus'] =
+      newOutstanding <= 0 ? 'Paid' : newPaid > 0 ? 'Partial' : 'Unpaid';
+
+    const paymentRecord = {
+      id: `pay_${Date.now()}`,
+      amount: payment.amount,
+      date: payment.date || now.slice(0, 10),
+      mode: payment.mode,
+      reference: payment.reference,
+      recordedBy: member?.email || user?.email || 'admin',
+      createdAt: now,
+    };
+
+    const nextPaymentHistory = [paymentRecord, ...(order.paymentHistory || [])];
+
+    await updateDoc(doc(db, 'orders', orderId), {
+      paidAmount: newPaid,
+      outstandingAmount: newOutstanding,
+      paymentStatus: newPaymentStatus,
+      paymentHistory: nextPaymentHistory,
+      updatedAt: now,
+    });
+
+    await logActivity(
+      'order',
+      orderId,
+      'update',
+      `Recorded payment of ₹${payment.amount.toLocaleString('en-IN')} via ${payment.mode} for Order ${order.orderNumber} (Outstanding: ₹${newOutstanding.toLocaleString('en-IN')})`
+    );
   };
 
   const softDeleteOrder = async (id: string): Promise<void> => {
@@ -2173,6 +2369,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         orders,
         loadingOrders,
         createOrderTransaction,
+        changeOrderDeliveryStatus,
+        updateOrderDispatch,
+        recordOrderPayment,
         softDeleteOrder,
         plans,
         loadingPlans,

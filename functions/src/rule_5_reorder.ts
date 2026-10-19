@@ -177,8 +177,10 @@ export async function executeRule5ReorderReminders(
     const orderDates: Date[] = [];
     ordersSnap.forEach((d) => {
       const dData = d.data();
-      if (!dData.isDeleted) {
-        const oDate = parseDate(dData.orderDate);
+      // Skip deleted and cancelled orders
+      if (!dData.isDeleted && dData.deliveryStatus !== 'Cancelled') {
+        // Prefer invoiceDate, fallback to orderDate
+        const oDate = parseDate(dData.invoiceDate || dData.orderDate);
         if (oDate) {
           orderDates.push(oDate);
         }

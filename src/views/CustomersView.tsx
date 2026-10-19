@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Loader2,
   Database,
+  Edit3,
 } from 'lucide-react';
 import { Customer, CustomerType, CustomerStatus, LeadStage, LeadSource, OutreachLog } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -34,6 +35,7 @@ import { normalizePhone, formatPhoneDisplay, getTelLink, getWhatsAppLink } from 
 import { exportCustomersToExcel, exportCustomersToPDF, exportFullBackupExcel } from '../lib/export';
 import { CustomerImportModal } from '../components/CustomerImportModal';
 import { CustomerDetailDrawer } from '../components/CustomerDetailDrawer';
+import { EditCustomerModal } from '../components/EditCustomerModal';
 import { LogOutcomeModal } from '../components/LogOutcomeModal';
 import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
 import { useAuth } from '../context/AuthContext';
@@ -73,6 +75,7 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
 
   // Filter Presets Modal
   const [showSaveFilterModal, setShowSaveFilterModal] = useState(false);
@@ -571,9 +574,20 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                       {/* Contact & Phone */}
                       <td className="py-3 px-3">
                         <div className="font-medium text-stone-800">{cust.contactPerson || '—'}</div>
-                        <div className="text-[11px] text-stone-700 font-mono">
-                          {formatPhoneDisplay(cust.phone)}
-                        </div>
+                        {cust.isPhoneMissing || !cust.phone ? (
+                          <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            Phone missing
+                          </span>
+                        ) : (
+                          <div className="text-[11px] text-stone-700 font-mono">
+                            {formatPhoneDisplay(cust.phone)}
+                          </div>
+                        )}
+                        {cust.gstin && (
+                          <div className="text-[10px] font-mono text-stone-500 mt-0.5">
+                            GST: {cust.gstin}
+                          </div>
+                        )}
                       </td>
 
                       {/* Location */}
@@ -630,26 +644,53 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                       <td className="py-3 px-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           {/* Direct Phone Call */}
-                          <a
-                            href={telLink}
-                            onClick={() => setOutcomeTarget({ customer: cust, channel: 'Call' })}
-                            className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors"
-                            title="Call customer directly"
-                          >
-                            <Phone className="w-3.5 h-3.5" />
-                          </a>
+                          {cust.phone ? (
+                            <a
+                              href={telLink}
+                              onClick={() => setOutcomeTarget({ customer: cust, channel: 'Call' })}
+                              className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-colors"
+                              title="Call customer directly"
+                            >
+                              <Phone className="w-3.5 h-3.5" />
+                            </a>
+                          ) : (
+                            <span
+                              className="p-1.5 rounded-lg bg-stone-100 text-stone-300 border border-stone-200 cursor-not-allowed"
+                              title="No phone number available"
+                            >
+                              <Phone className="w-3.5 h-3.5" />
+                            </span>
+                          )}
 
                           {/* Direct WhatsApp Click-to-Chat */}
-                          <a
-                            href={wpLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={() => setOutcomeTarget({ customer: cust, channel: 'WhatsApp' })}
-                            className="p-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition-colors"
-                            title="Send WhatsApp message"
+                          {cust.phone || cust.whatsapp ? (
+                            <a
+                              href={wpLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setOutcomeTarget({ customer: cust, channel: 'WhatsApp' })}
+                              className="p-1.5 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition-colors"
+                              title="Send WhatsApp message"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </a>
+                          ) : (
+                            <span
+                              className="p-1.5 rounded-lg bg-stone-100 text-stone-300 border border-stone-200 cursor-not-allowed"
+                              title="No WhatsApp number available"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </span>
+                          )}
+
+                          {/* Edit Customer Profile */}
+                          <button
+                            onClick={() => setEditingCustomer(cust)}
+                            className="p-1.5 rounded-lg bg-stone-50 text-stone-600 hover:text-[#881337] hover:bg-rose-50 border border-stone-200 transition-colors"
+                            title="Edit customer details"
                           >
-                            <MessageSquare className="w-3.5 h-3.5" />
-                          </a>
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
 
                           {/* Soft Delete */}
                           <button
@@ -733,9 +774,29 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                             rel="noopener noreferrer"
                             onClick={() => setOutcomeTarget({ customer: cust, channel: 'WhatsApp' })}
                             className="p-1 rounded-md bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200"
+                            title="WhatsApp"
                           >
                             <MessageSquare className="w-3 h-3" />
                           </a>
+                          <button
+                            onClick={() => setEditingCustomer(cust)}
+                            className="p-1 rounded-md bg-stone-50 text-stone-600 hover:text-[#881337] hover:bg-rose-50 border border-stone-200"
+                            title="Edit customer details"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Move "${cust.companyName}" to 30-day trash?`)) {
+                                softDeleteCustomer(cust.id);
+                                showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                              }
+                            }}
+                            className="p-1 rounded-md bg-stone-50 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200"
+                            title="Move to 30-day Trash"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -957,6 +1018,23 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
           if (activeCustomer) {
             setOutcomeTarget({ customer: activeCustomer, channel });
           }
+        }}
+        onEdit={(cust) => {
+          setEditingCustomer(cust);
+        }}
+      />
+
+      {/* Edit Customer Profile Modal */}
+      <EditCustomerModal
+        customer={editingCustomer}
+        isOpen={Boolean(editingCustomer)}
+        onClose={() => setEditingCustomer(null)}
+        onSave={async (customerId, updates) => {
+          await updateCustomer(customerId, updates);
+          if (activeCustomer && activeCustomer.id === customerId) {
+            setActiveCustomer({ ...activeCustomer, ...updates });
+          }
+          showToast(`Customer details updated successfully.`);
         }}
       />
 

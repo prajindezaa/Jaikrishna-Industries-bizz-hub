@@ -68,6 +68,12 @@ export type NotificationTemplateType =
   | 'wa_freq_override_logged'
   | 'order_new_recorded'
   | 'order_first_promo'
+  | 'order_dispatch_pending'
+  | 'order_dispatched_followup'
+  | 'order_delivered_feedback'
+  | 'order_payment_due_soon'
+  | 'order_payment_overdue'
+  | 'cust_phone_missing'
   | 'auto_run_summary'
   | 'auto_cap_deferred'
   | 'auto_rule_failed'
@@ -394,6 +400,60 @@ export function buildNotificationMessage(
       body = isTa
         ? `[needs proofreading by owner] முதல் ஆர்டர் உறுதி செய்யப்பட்டதால் ${cName} பழைய வாடிக்கையாளராக மாற்றப்பட்டது.`
         : `${cName} confirmed their first order and was automatically moved to "Old customer".`;
+      break;
+
+    case 'order_dispatch_pending':
+      title = isTa
+        ? `[needs proofreading by owner] அனுப்ப வேண்டிய ஆர்டர்: ${cName}`
+        : `Pending Dispatch: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] ${cName}-ன் ஆர்டர் (₹${ctx.amount || 0}) தயார் செய்யப்பட்டு அனுப்பப்பட வேண்டும்.`
+        : `Order for ${cName} (₹${(ctx.amount || 0).toLocaleString('en-IN')}) is packed and awaiting dispatch.`;
+      break;
+
+    case 'order_dispatched_followup':
+      title = isTa
+        ? `[needs proofreading by owner] டெலிவரி நிலை சரிபார்ப்பு: ${cName}`
+        : `In-Transit Follow-up: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] ${cName}-க்கு அனுப்பப்பட்ட பார்சல் இன்னும் டெலிவரி ஆகவில்லை. கண்காணிக்கவும்.`
+        : `Shipment for ${cName} dispatched over 5 days ago. Check LR / tracking status.`;
+      break;
+
+    case 'order_delivered_feedback':
+      title = isTa
+        ? `[needs proofreading by owner] வாடிக்கையாளர் கருத்து பணி: ${cName}`
+        : `Feedback Call: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] ${cName}-ன் ஆர்டர் டெலிவரி செய்யப்பட்டது. திருப்தியை அறிய அழைக்கவும்.`
+        : `Order for ${cName} delivered. Call customer to verify receipt and satisfaction.`;
+      break;
+
+    case 'order_payment_due_soon':
+      title = isTa
+        ? `[needs proofreading by owner] பணம் செலுத்த வேண்டிய நாள்: ${cName}`
+        : `Payment Due Soon: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] ${cName}-ன் நிலுவைத் தொகை ₹${(ctx.amount || 0).toLocaleString('en-IN')} விரைவில் செலுத்தப்பட வேண்டும்.`
+        : `Payment of ₹${(ctx.amount || 0).toLocaleString('en-IN')} from ${cName} is due on ${ctx.dateStr || 'today'}.`;
+      break;
+
+    case 'order_payment_overdue':
+      title = isTa
+        ? `[needs proofreading by owner] நிலுவைத் தொகை நினைவூட்டல்: ${cName}`
+        : `Payment Overdue: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] ${cName}-ன் ₹${(ctx.amount || 0).toLocaleString('en-IN')} நிலுவைத் தொகை தாமதமாகியுள்ளது.`
+        : `Outstanding balance of ₹${(ctx.amount || 0).toLocaleString('en-IN')} for ${cName} is overdue.`;
+      break;
+
+    case 'cust_phone_missing':
+      title = isTa
+        ? `[needs proofreading by owner] தொலைபேசி எண் தேவை: ${cName}`
+        : `Phone Missing: ${cName}`;
+      body = isTa
+        ? `[needs proofreading by owner] இன்வாய்ஸ் மூலம் சேர்க்கப்பட்ட ${cName}-ன் தொலைபேசி எண்ணைப் பதிவு செய்யவும்.`
+        : `${cName} was added from an invoice without a phone number. Add contact number.`;
       break;
 
     case 'auto_run_summary':

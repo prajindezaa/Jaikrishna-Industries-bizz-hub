@@ -19,6 +19,8 @@ import {
   BarChart2,
   Calendar,
   AlertCircle,
+  Truck,
+  CreditCard,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -113,6 +115,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const todaysTasks = tasks.filter(t => t.date === todayStr);
   const pendingTasksCount = todaysTasks.filter(t => t.status === 'Pending' || t.status === 'In progress').length;
   const missedTasksCount = todaysTasks.filter(t => t.status === 'Missed').length;
+
+  // Wholesale Orders & Dispatch Metrics
+  const pendingDispatchCount = orders.filter(
+    (o) => o.deliveryStatus === 'Pending' || o.deliveryStatus === 'Packed'
+  ).length;
+  const inTransitCount = orders.filter((o) => o.deliveryStatus === 'Dispatched').length;
+  const overduePaymentOrders = orders.filter(
+    (o) =>
+      o.paymentStatus !== 'Paid' &&
+      o.paymentDueDate &&
+      o.paymentDueDate < todayStr
+  );
+  const totalOutstanding = orders.reduce((sum, o) => {
+    if (o.paymentStatus === 'Paid') return sum;
+    const out = o.outstandingAmount !== undefined ? o.outstandingAmount : Math.max(0, o.totalAmount - (o.paidAmount || 0));
+    return sum + out;
+  }, 0);
 
   const followUpsDueCount = customers.filter(c => {
     if (!c.nextFollowUpDate) return false;
@@ -296,6 +315,85 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-1 text-xs text-stone-500">
             Due today or overdue
+          </div>
+        </div>
+      </div>
+
+      {/* Wholesale Orders & Dispatch Tracking Strip */}
+      <div className="bg-white rounded-2xl border border-stone-200/90 p-5 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-[#881337] text-white flex items-center justify-center shadow-xs">
+              <ShoppingBag className="w-4 h-4 text-amber-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-stone-900 font-display">
+                  Orders &amp; Dispatch Hub
+                </h3>
+                <span className="text-[10px] font-bold bg-stone-100 text-stone-700 px-2 py-0.5 rounded-full font-mono">
+                  {orders.length} Wholesale Orders
+                </span>
+              </div>
+              <p className="text-xs text-stone-500">
+                Invoice-to-order pipeline, lorry receipt (LR) dispatch, and payment collections
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onNavigate('orders')}
+            className="text-xs font-bold text-[#881337] hover:text-[#70102e] flex items-center gap-1 self-start sm:self-auto py-1 px-2.5 rounded-lg hover:bg-stone-50 border border-stone-200 transition-colors"
+          >
+            <span>Open Orders Hub</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* 4 Quick Counters for Orders */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+          <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+            <span className="text-[10px] text-stone-500 uppercase tracking-wider block font-semibold flex items-center gap-1">
+              <Truck className="w-3 h-3 text-amber-600" />
+              Pending Dispatch
+            </span>
+            <div className="text-xl font-bold font-mono text-stone-900 mt-1">
+              {pendingDispatchCount}
+            </div>
+            <span className="text-[10px] text-stone-400">Packed / awaiting transport</span>
+          </div>
+
+          <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+            <span className="text-[10px] text-stone-500 uppercase tracking-wider block font-semibold flex items-center gap-1">
+              <Truck className="w-3 h-3 text-sky-600" />
+              In Transit
+            </span>
+            <div className="text-xl font-bold font-mono text-sky-900 mt-1">
+              {inTransitCount}
+            </div>
+            <span className="text-[10px] text-stone-400">Dispatched via courier/lorry</span>
+          </div>
+
+          <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+            <span className="text-[10px] text-stone-500 uppercase tracking-wider block font-semibold flex items-center gap-1">
+              <CreditCard className="w-3 h-3 text-rose-600" />
+              Overdue Payments
+            </span>
+            <div className="text-xl font-bold font-mono text-rose-900 mt-1">
+              {overduePaymentOrders.length}
+            </div>
+            <span className="text-[10px] text-stone-400">Past agreed credit due date</span>
+          </div>
+
+          <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+            <span className="text-[10px] text-stone-500 uppercase tracking-wider block font-semibold flex items-center gap-1">
+              <CreditCard className="w-3 h-3 text-amber-600" />
+              Total Outstanding
+            </span>
+            <div className="text-xl font-bold font-mono text-stone-900 mt-1">
+              ₹{totalOutstanding.toLocaleString('en-IN')}
+            </div>
+            <span className="text-[10px] text-stone-400">Unsettled order receivables</span>
           </div>
         </div>
       </div>

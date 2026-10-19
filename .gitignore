@@ -56,3 +56,6 @@ Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
+
+# Test fixtures & invoices (private business data)
+test-fixtures/

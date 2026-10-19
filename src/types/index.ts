@@ -95,10 +95,14 @@ export interface Customer {
   id: string;
   companyName: string;
   contactPerson: string;
-  phone: string; // normalized E.164, e.g. +919876543210
+  phone: string; // normalized E.164, e.g. +919876543210 (or empty/optional when created from invoice)
   altPhone?: string;
-  whatsapp: string; // normalized
+  whatsapp: string; // normalized (or empty when created from invoice)
   email?: string;
+  gstin?: string; // Optional GSTIN (15 alphanumeric)
+  address?: string; // Full street address
+  city?: string; // City name
+  isPhoneMissing?: boolean; // True when created from invoice without phone
   place: CustomerPlace;
   customerType: CustomerType;
   status: CustomerStatus;
@@ -338,23 +342,64 @@ export interface OrderItem {
   total: number;
 }
 
+export interface OrderDispatchDetails {
+  transporter?: string;
+  vehicleNumber?: string;
+  lrNumber?: string;
+  boxesCount?: number;
+  dispatchDate?: string; // YYYY-MM-DD
+  deliveryDate?: string; // YYYY-MM-DD
+  notes?: string;
+}
+
+export interface OrderPaymentRecord {
+  id: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  mode: 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque';
+  reference?: string;
+  recordedBy: string;
+  createdAt: string;
+}
+
+export interface OrderStatusHistoryEntry {
+  status: 'Pending' | 'Packed' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'On hold';
+  changedAt: string;
+  changedBy: string;
+  reason?: string;
+}
+
 export interface Order {
   id: string;
   orderNumber: string; // e.g. JKI-2026-0001
+  invoiceNumber?: string; // e.g. "62"
+  invoiceDate?: string; // YYYY-MM-DD
+  financialYear?: string; // e.g. "2026-2027" (April to March)
   customerId: string;
   customerName: string;
+  customerGstin?: string;
+  customerAddress?: string;
+  customerCity?: string;
   items: OrderItem[];
   subtotal: number;
   discount: number;
-  totalAmount: number;
-  paymentStatus: 'Pending' | 'Partial' | 'Paid' | 'Credit';
-  deliveryStatus: 'Pending' | 'Packed' | 'Dispatched' | 'Delivered';
+  totalAmount: number; // Bill Value
+  paymentStatus: 'Pending' | 'Partial' | 'Paid' | 'Credit' | 'Unpaid';
+  deliveryStatus: 'Pending' | 'Packed' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'On hold';
   orderDate: string; // YYYY-MM-DD
+  paymentDueDate?: string; // YYYY-MM-DD
+  paidAmount?: number;
+  outstandingAmount?: number;
+  paymentHistory?: OrderPaymentRecord[];
+  dispatch?: OrderDispatchDetails;
+  statusHistory?: OrderStatusHistoryEntry[];
+  invoiceFileName?: string;
   notes?: string;
   recordedBy: string;
   isDeleted: boolean;
   deletedAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Product {

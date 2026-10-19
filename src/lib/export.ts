@@ -165,6 +165,79 @@ export function exportFullBackupExcel(data: {
 }
 
 /**
+ * Exports orders to an Excel (.xlsx) file with invoice, customer, payment and dispatch details
+ */
+export function exportOrdersToExcel(orders: Order[], filename = 'Jaikrishna_Orders.xlsx') {
+  const data = orders.map((o) => ({
+    'Order #': o.orderNumber,
+    'Invoice #': o.invoiceNumber || '—',
+    'Invoice Date': o.invoiceDate || o.orderDate,
+    'Financial Year': o.financialYear || '—',
+    'Customer Name': o.customerName,
+    'City': o.customerCity || '—',
+    'GSTIN': o.customerGstin || '—',
+    'Total Bill Value (₹)': o.totalAmount,
+    'Payment Status': o.paymentStatus,
+    'Paid Amount (₹)': o.paidAmount || (o.paymentStatus === 'Paid' ? o.totalAmount : 0),
+    'Outstanding (₹)': o.outstandingAmount || 0,
+    'Delivery / Dispatch Status': o.deliveryStatus,
+    'Transporter': o.dispatch?.transporter || '—',
+    'Vehicle #': o.dispatch?.vehicleNumber || '—',
+    'LR #': o.dispatch?.lrNumber || '—',
+    'Boxes': o.dispatch?.boxesCount || '—',
+    'Dispatch Date': o.dispatch?.dispatchDate || '—',
+    'Delivery Date': o.dispatch?.deliveryDate || '—',
+    'Recorded By': o.recordedBy,
+    'Created At': o.createdAt,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Orders');
+  XLSX.writeFile(workbook, filename);
+}
+
+/**
+ * Exports orders to a clean, printable PDF document with Jaikrishna Industries branding
+ */
+export function exportOrdersToPDF(orders: Order[], filename = 'Jaikrishna_Orders.pdf') {
+  const doc = new jsPDF({ orientation: 'landscape' });
+
+  // Header Title
+  doc.setFontSize(16);
+  doc.setTextColor(136, 19, 55); // #881337 Maroon
+  doc.text('Jaikrishna Industries — Orders, Invoicing & Dispatch Directory', 14, 15);
+
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`Generated on: ${new Date().toLocaleString('en-IN')} · Total Orders: ${orders.length}`, 14, 22);
+
+  const tableData = orders.map((o, index) => [
+    index + 1,
+    o.orderNumber,
+    o.invoiceNumber ? `#${o.invoiceNumber}` : '—',
+    o.invoiceDate || o.orderDate,
+    o.customerName,
+    o.customerCity || '—',
+    `₹${o.totalAmount.toLocaleString('en-IN')}`,
+    o.paymentStatus,
+    o.deliveryStatus,
+  ]);
+
+  autoTable(doc, {
+    head: [['#', 'Order #', 'Invoice #', 'Date', 'Customer', 'City', 'Bill Value', 'Payment', 'Dispatch']],
+    body: tableData,
+    startY: 26,
+    theme: 'grid',
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [136, 19, 55], textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [250, 248, 245] },
+  });
+
+  doc.save(filename);
+}
+
+/**
  * Generates and downloads a clean sample Excel template for customer import
  */
 export function downloadCustomerImportTemplate() {

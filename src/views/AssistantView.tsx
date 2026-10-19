@@ -154,12 +154,23 @@ export const AssistantView: React.FC = () => {
         priority: t.priority,
         type: t.type,
       })),
-      orders: orders.slice(0, 15).map((o) => ({
+      orders: orders.slice(0, 20).map((o) => ({
         orderNumber: o.orderNumber,
+        invoiceNumber: o.invoiceNumber,
         customerName: o.customerName,
         totalAmount: o.totalAmount,
+        paidAmount: o.paidAmount || 0,
+        outstandingAmount: o.outstandingAmount !== undefined ? o.outstandingAmount : Math.max(0, o.totalAmount - (o.paidAmount || 0)),
         paymentStatus: o.paymentStatus,
-        date: o.orderDate,
+        paymentDueDate: o.paymentDueDate,
+        deliveryStatus: o.deliveryStatus,
+        dispatch: o.dispatch ? {
+          transporter: o.dispatch.transporter,
+          lrNumber: o.dispatch.lrNumber,
+          boxesCount: o.dispatch.boxesCount,
+          dispatchDate: o.dispatch.dispatchDate,
+        } : null,
+        date: o.invoiceDate || o.orderDate,
       })),
       metaAds: metaAds.map((a) => ({
         id: a.id,
@@ -498,6 +509,28 @@ function getClientAssistantFallback(message: string, context: any): string {
       (c.place?.city && c.place.city.toLowerCase().includes('salem'))
     );
     return `Vanakkam! Based on your live Jaikrishna Industries workspace, you have ${summary.totalCustomers} total customers loaded across Tamil Nadu districts (including ${salemCustomers.length} in Salem). You can view and manage all 38 Tamil Nadu districts directly in the Customers Hub.`;
+  }
+
+  if (q.includes('dispatch') || q.includes('lorry') || q.includes('lr number') || q.includes('transport') || q.includes('transit')) {
+    const orders = context?.orders || [];
+    const inTransit = orders.filter((o: any) => o.deliveryStatus === 'Dispatched');
+    const pendingDispatch = orders.filter((o: any) => o.deliveryStatus === 'Pending' || o.deliveryStatus === 'Packed');
+    const lrList = inTransit.filter((o: any) => o.dispatch?.lrNumber).map((o: any) => `- Order ${o.orderNumber} (${o.customerName}): LR #${o.dispatch.lrNumber} via ${o.dispatch.transporter || 'Transporter'}`).join('\n');
+    return `Vanakkam! Dispatch & Logistics Status:\n- Pending / Packing: ${pendingDispatch.length} orders\n- In-Transit / Dispatched: ${inTransit.length} orders\n${lrList ? `\nActive Consignments:\n${lrList}` : ''}\nYou can record or track lorry receipts directly in the Orders Hub.`;
+  }
+
+  if (q.includes('payment') || q.includes('outstanding') || q.includes('due') || q.includes('credit')) {
+    const orders = context?.orders || [];
+    const unpaid = orders.filter((o: any) => o.paymentStatus !== 'Paid');
+    const totalOut = unpaid.reduce((sum: number, o: any) => sum + (Number(o.outstandingAmount !== undefined ? o.outstandingAmount : (o.totalAmount - (o.paidAmount || 0))) || 0), 0);
+    return `Vanakkam! Payment Accounts Receivable Summary:\n- Unsettled / Credit Orders: ${unpaid.length}\n- Total Outstanding Balance: ₹${totalOut.toLocaleString('en-IN')}\n\nYou can view customer credit aging and log UPI, Cash, or Bank transfers in the Orders Hub.`;
+  }
+
+  if (q.includes('revenue') || q.includes('order') || q.includes('sales')) {
+    const orders = context?.orders || [];
+    const totalRev = orders.reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
+    const paidRev = orders.reduce((sum: number, o: any) => sum + (Number(o.paidAmount) || 0), 0);
+    return `Vanakkam! Your active orders total ${summary.totalOrders} records, with a total booked order value of ₹${totalRev.toLocaleString('en-IN')} (Settled collections: ₹${paidRev.toLocaleString('en-IN')}). All transactions are tracked in the Orders Hub.`;
   }
 
   if (q.includes('notification') || q.includes('email') || q.includes('cap')) {

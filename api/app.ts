@@ -848,9 +848,23 @@ function getSmartAssistantFallback(message: string, context: any): string {
     return `Vanakkam! You currently have ${pendingTasks.length} pending follow-up task(s) out of ${summary.totalTasks} total tasks in your schedule. You can review them in the Tasks & Visits view.`;
   }
 
+  if (q.includes('dispatch') || q.includes('lorry') || q.includes('lr number') || q.includes('transport') || q.includes('transit')) {
+    const inTransit = orders.filter((o: any) => o.deliveryStatus === 'Dispatched');
+    const pendingDispatch = orders.filter((o: any) => o.deliveryStatus === 'Pending' || o.deliveryStatus === 'Packed');
+    const lrList = inTransit.filter((o: any) => o.dispatch?.lrNumber).map((o: any) => `- Order ${o.orderNumber} (${o.customerName}): LR #${o.dispatch.lrNumber} via ${o.dispatch.transporter || 'Transporter'}`).join('\n');
+    return `Vanakkam! Dispatch & Logistics Status:\n- Pending / Packing: ${pendingDispatch.length} orders\n- In-Transit / Dispatched: ${inTransit.length} orders\n${lrList ? `\nActive Consignments:\n${lrList}` : ''}\nYou can record or track lorry receipts directly in the Orders Hub.`;
+  }
+
+  if (q.includes('payment') || q.includes('outstanding') || q.includes('due') || q.includes('credit')) {
+    const unpaid = orders.filter((o: any) => o.paymentStatus !== 'Paid');
+    const totalOut = unpaid.reduce((sum: number, o: any) => sum + (Number(o.outstandingAmount !== undefined ? o.outstandingAmount : (o.totalAmount - (o.paidAmount || 0))) || 0), 0);
+    return `Vanakkam! Payment Accounts Receivable Summary:\n- Unsettled / Credit Orders: ${unpaid.length}\n- Total Outstanding Balance: ₹${totalOut.toLocaleString('en-IN')}\n\nYou can view customer credit aging and log UPI, Cash, or Bank transfers in the Orders Hub.`;
+  }
+
   if (q.includes('revenue') || q.includes('order') || q.includes('sales')) {
     const totalRev = orders.reduce((sum: number, o: any) => sum + (Number(o.totalAmount) || 0), 0);
-    return `Vanakkam! Your active orders total ${summary.totalOrders} records, with a recent settled revenue of ₹${totalRev.toLocaleString('en-IN')}. All transactions are recorded securely via the Orders Hub.`;
+    const paidRev = orders.reduce((sum: number, o: any) => sum + (Number(o.paidAmount) || 0), 0);
+    return `Vanakkam! Your active orders total ${summary.totalOrders} records, with a total booked order value of ₹${totalRev.toLocaleString('en-IN')} (Settled collections: ₹${paidRev.toLocaleString('en-IN')}). All transactions are tracked in the Orders Hub.`;
   }
 
   if (q.includes('team') || q.includes('role') || q.includes('member')) {
