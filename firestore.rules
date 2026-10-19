@@ -121,24 +121,29 @@ service cloud.firestore {
       allow read, write: if isAllowedMember();
     }
 
-    // Notification logs & deduplication records
+    // Notification logs & deduplication records (Admin SDK only)
     match /notification_log/{logId} {
-      allow read, write: if isAllowedMember();
+      allow read: if isAllowedMember();
+      allow write: if false; // Only Admin SDK / server router can write
     }
 
-    // In-app notifications: strictly allowlisted members only.
+    // In-app notifications: Strictly server-created. Members can read their own & mark read.
     match /notifications/{notificationId} {
-      allow read, update: if isAllowedMember();
-      allow create: if isAllowedMember();
-      allow delete: if isAllowedMember();
+      allow read: if isAllowedMember() && resource.data.recipientEmail == currentUserEmail();
+      allow update: if isAllowedMember() && 
+        resource.data.recipientEmail == currentUserEmail() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow create: if false; // Clients cannot create notifications directly
+      allow delete: if isAllowedMember() && resource.data.recipientEmail == currentUserEmail();
     }
 
     // Members and registered push devices
     match /members/{memberId} {
-      allow read, write: if isAllowedMember();
+      allow read: if isAllowedMember();
+      allow write: if isAllowedMember() && memberId == currentUserEmail();
 
       match /devices/{deviceId} {
-        allow read, write: if isAllowedMember();
+        allow read, write: if isAllowedMember() && memberId == currentUserEmail();
       }
     }
 

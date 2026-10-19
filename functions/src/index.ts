@@ -28,12 +28,18 @@ import { executeRule5ReorderReminders } from './rule_5_reorder';
 export { executeRule5ReorderReminders } from './rule_5_reorder';
 import { executeRule6FestivalCampaignPrep } from './rule_6_festival';
 export { executeRule6FestivalCampaignPrep } from './rule_6_festival';
-export {
+import {
   routeNotificationIntent,
   isWithinQuietHours,
   getCurrentTimeIST,
   EMAIL_ENABLED,
 } from './notification_router';
+export {
+  routeNotificationIntent,
+  isWithinQuietHours,
+  getCurrentTimeIST,
+  EMAIL_ENABLED,
+};
 export type { NotificationIntent } from './notification_router';
 
 // Initialize Firebase Admin if not already initialized
@@ -87,21 +93,23 @@ export const checkRemindersScheduled = onSchedule(
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        // Log peer alert notification for all team members
+        // Log peer alert notification for other team members (never the assignee)
         const teamEmails = [
           'prajindezaa142@gmail.com',
           'jaikrishnaindustries1@gmail.com',
           'srinisrkp@gmail.com',
         ];
+        const taskAssignee = (task.assignedTo || '').toLowerCase().trim();
         for (const recipientEmail of teamEmails) {
-          await db.collection('notifications').add({
+          if (recipientEmail === taskAssignee) continue; // Exclude self
+          await routeNotificationIntent(db, {
             recipientEmail,
-            title: `Task Missed: ${task.title}`,
-            body: `Scheduled for ${task.customerName || 'factory'} at ${task.startTime}-${task.endTime} was not completed.`,
-            type: 'missed',
+            title: `Missed Task Alert: ${task.customerName || 'Customer'}`,
+            body: `${task.assignedTo || 'Member'} missed task "${task.title}".`,
+            type: 'task_missed_peer',
+            priority: 'normal',
             deepLink: `/tasks?id=${taskId}`,
-            isRead: false,
-            createdAt: FieldValue.serverTimestamp(),
+            dedupeKey: `task_missed_peer_${taskId}_${recipientEmail}_${todayStr}`,
           });
         }
       }
@@ -647,15 +655,15 @@ export async function executeMorningPlanCheck() {
       date: todayStr,
     });
 
-    // In-App Notification (Always)
-    await db.collection('notifications').add({
+    // Route through notification router
+    await routeNotificationIntent(db, {
       recipientEmail: email,
-      title: `Good Morning! Daily Plan — ${todayStr}`,
-      body: `${tasksTodaySnap.size} task(s) today, ${overdueTasksSnap.size} overdue, ${adsWaitingSnap.size} Meta ad(s) waiting, and ${festivalsSnap.size} upcoming festival(s).`,
-      type: 'morning_plan',
-      deepLink: '/tasks',
-      isRead: false,
-      createdAt: FieldValue.serverTimestamp(),
+      title: `Daily Morning Plan — ${todayStr}`,
+      body: `You have ${tasksTodaySnap.size} task(s) today and ${overdueTasksSnap.size} overdue task(s).`,
+      type: 'plan_morning_brief',
+      priority: 'high',
+      deepLink: '/planning',
+      dedupeKey: `morning_plan_${email}_${todayStr}`,
     });
 
     // Email Dispatch via Resend (with Cap Fallback to Push/In-App)

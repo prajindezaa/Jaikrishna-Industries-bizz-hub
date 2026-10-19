@@ -309,30 +309,31 @@ app.post('/api/devices/test-push', standardRateLimiter, requireAuth, async (req:
   }
 });
 
-// Legacy test-notification endpoint updated to write in-app test notification and trigger push
+// Legacy test-notification endpoint updated to route through hardened notification pipeline
 app.post('/api/test-notification', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const targetEmail = (req.memberEmail || req.body?.email || INITIAL_ADMIN_EMAIL).toLowerCase().trim();
   const adminSdk = getFirebaseAdmin();
   const db = adminSdk.firestore();
 
-  // Write in-app notification
-  const notifRef = db.collection('notifications').doc();
-  const notifData = {
-    id: notifRef.id,
+  const { routeNotificationIntent } = await import('../functions/src/notification_router.js');
+
+  const routerResult = await routeNotificationIntent(db as any, {
     recipientEmail: targetEmail,
     title: 'Test Notification',
-    body: 'In-app notification test dispatched successfully.',
+    body: 'In-app and push notification pipeline test dispatched successfully.',
     type: 'system',
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    deepLink: '/settings',
-  };
-  await notifRef.set(notifData);
+    priority: 'normal',
+    deepLink: '/settings?tab=devices',
+    dedupeKey: `test_notif_${targetEmail}_${Date.now()}`,
+    bypassQuietHours: true,
+  });
 
   res.json({
-    success: true,
-    message: `In-app test notification created for ${targetEmail}`,
-    notification: notifData,
+    success: routerResult.accepted,
+    message: routerResult.accepted
+      ? `Notification pipeline delivered to ${targetEmail} (${routerResult.channelsDelivered.join(', ')})`
+      : `Notification suppressed: ${routerResult.suppressionReason}`,
+    routerResult,
   });
 });
 
@@ -582,52 +583,19 @@ app.post('/api/automations/sample-morning-plan', standardRateLimiter, requireAut
       return !data.isDeleted && isOpen && data.date && data.date < todayStr;
     });
 
-    // Create an in-app notification
-    await adminSdk.firestore().collection('notifications').add({
+    // Route sample morning plan through unified notification pipeline
+    const { routeNotificationIntent } = await import('../functions/src/notification_router.js');
+    const routerRes = await routeNotificationIntent(adminSdk.firestore() as any, {
       recipientEmail: targetEmail,
-      title: `[Sample] Daily Operations Plan — ${todayStr}`,
-      body: `You have ${tasksToday.length} task(s) today and ${overdueTasks.length} overdue tasks in your queue.`,
+      title: `🌅 Morning Plan — ${todayStr}`,
+      body: `You have ${tasksToday.length} task(s) today and ${overdueTasks.length} overdue follow-up(s).`,
       type: 'morning_plan',
+      priority: 'high',
       deepLink: '/tasks',
-      isRead: false,
-      createdAt: getFieldValue().serverTimestamp(),
+      dedupeKey: `sample_morning_plan_${targetEmail}_${todayStr}_${Date.now()}`,
+      bypassQuietHours: true,
     });
-
-    // Also dispatch real Web Push notification to member's registered active devices
-    let pushDeliveredCount = 0;
-    try {
-      const devicesSnap = await adminSdk.firestore()
-        .collection('members')
-        .doc(targetEmail)
-        .collection('devices')
-        .where('active', '==', true)
-        .get();
-
-      const messaging = adminSdk.messaging();
-      for (const devDoc of devicesSnap.docs) {
-        const dev = devDoc.data();
-        if (dev.token) {
-          try {
-            await messaging.send({
-              token: dev.token,
-              notification: {
-                title: `🌅 Morning Plan — ${todayStr}`,
-                body: `You have ${tasksToday.length} task(s) today and ${overdueTasks.length} overdue follow-up(s).`,
-              },
-              data: {
-                deepLink: '/tasks',
-                type: 'morning_plan',
-              },
-            });
-            pushDeliveredCount++;
-          } catch (pushErr) {
-            console.warn(`[Sample Morning Plan] Push failed for device ${dev.deviceId}:`, pushErr);
-          }
-        }
-      }
-    } catch (pushSearchErr) {
-      console.warn('[Sample Morning Plan] Could not query devices for push:', pushSearchErr);
-    }
+    const pushDeliveredCount = routerRes.channelsDelivered.includes('push') ? 1 : 0;
 
     res.json({
       success: true,

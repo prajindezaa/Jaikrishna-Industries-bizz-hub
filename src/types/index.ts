@@ -400,7 +400,7 @@ export interface AppNotification {
   title: string;
   body: string;
   deepLink?: string;
-  type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system';
+  type: string;
   isRead: boolean;
   createdAt: string;
   priority?: 'low' | 'normal' | 'high' | 'critical';

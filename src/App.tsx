@@ -46,8 +46,21 @@ const MainAppContent: React.FC = () => {
       setTimeout(() => setForegroundToast(null), 5000);
     });
 
+    // 3. Deep Link Hydration on Mount & Popstate
+    const handleUrlRoute = () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const mod = searchParams.get('module') as ActiveModule | null;
+      if (mod && ['dashboard', 'customers', 'tasks', 'planning', 'orders', 'automations', 'trash', 'settings', 'assistant'].includes(mod)) {
+        setCurrentModule(mod);
+      }
+    };
+
+    handleUrlRoute();
+    window.addEventListener('popstate', handleUrlRoute);
+
     return () => {
       if (unsubscribe) unsubscribe();
+      window.removeEventListener('popstate', handleUrlRoute);
     };
   }, [user]);
 

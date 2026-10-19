@@ -14,6 +14,7 @@
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
+import { routeNotificationIntent } from './notification_router';
 
 /**
  * Calculates due date in 'Asia/Kolkata' timezone:
@@ -140,14 +141,14 @@ export async function executeRule1CustomerStageChange(
     } else if (pTask.status !== 'Done' && pTask.status !== 'Missed') {
       // Touched task: notify assignee instead of deleting
       const assignee = pTask.assignedTo || 'prajindezaa142@gmail.com';
-      await db.collection('notifications').add({
+      await routeNotificationIntent(db, {
         recipientEmail: assignee,
         title: `Stage Changed for ${customerName}`,
         body: `Stage changed to "${newStage}", but existing task "${pTask.title}" was already edited/started and was preserved.`,
-        type: 'general',
+        type: 'task_stage_preserved',
+        priority: 'normal',
         deepLink: `/tasks?id=${pDoc.id}`,
-        isRead: false,
-        createdAt: FieldValue.serverTimestamp(),
+        dedupeKey: `stage_preserve_${pDoc.id}_${newStage}`,
       });
     }
   }
@@ -298,14 +299,14 @@ export async function executeRule1CustomerStageChange(
     });
 
     // Notify members in-app that items were deferred
-    await db.collection('notifications').add({
+    await routeNotificationIntent(db, {
       recipientEmail: assignedTo,
       title: 'Daily Automation Cap Reached',
       body: `Follow-up task for ${customerName} was queued in automation_pending and will be scheduled on the next morning run.`,
-      type: 'general',
+      type: 'auto_cap_deferred',
+      priority: 'normal',
       deepLink: '/automations',
-      isRead: false,
-      createdAt: FieldValue.serverTimestamp(),
+      dedupeKey: `auto_deferred_rule1_${customerName}_${todayStr}`,
     });
     return { status: 'queued_overflow', taskId: automationKey };
   }

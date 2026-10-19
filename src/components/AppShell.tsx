@@ -28,6 +28,7 @@ import {
 import { ActiveModule } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { CommandPalette } from './CommandPalette';
 import { OfflineIndicator } from './OfflineIndicator';
@@ -51,10 +52,23 @@ export const AppShell: React.FC<AppShellProps> = ({
 }) => {
   const { member, signOut } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
+  const { tasks, customers, metaAds } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Dynamic live badge counts based on real Firestore data
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const overdueTasksCount = tasks.filter(
+    (t) => !t.isDeleted && (t.status === 'Pending' || t.status === 'In progress') && t.date && t.date <= todayStr
+  ).length;
+  const followupsDueCount = customers.filter(
+    (c) => !c.isDeleted && c.nextFollowUpDate && c.nextFollowUpDate <= todayStr
+  ).length;
+  const adsWaitingResultsCount = metaAds.filter(
+    (a) => !a.isDeleted && a.stage === 'Waiting for result'
+  ).length;
 
   // Global Keyboard Shortcuts (N = New Customer, T = New Task, / = Search, Ctrl/Cmd+K = Palette)
   useEffect(() => {
@@ -179,19 +193,37 @@ export const AppShell: React.FC<AppShellProps> = ({
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentModule === item.id;
+              let badgeCount = 0;
+              let badgeColor = 'bg-stone-200 text-stone-700';
+
+              if (item.id === 'tasks' && overdueTasksCount > 0) {
+                badgeCount = overdueTasksCount;
+                badgeColor = 'bg-rose-600 text-white';
+              } else if (item.id === 'customers' && followupsDueCount > 0) {
+                badgeCount = followupsDueCount;
+                badgeColor = 'bg-amber-600 text-white';
+              }
+
               return (
                 <button
                   key={item.id}
                   onClick={() => onNavigate(item.id)}
                   title={sidebarCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium rounded-lg transition-colors text-left ${
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-colors text-left ${
                     isActive
                       ? 'bg-stone-900 text-white font-semibold shadow-xs'
                       : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100/80'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-stone-500'}`} />
-                  {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  <div className="flex items-center gap-3 truncate">
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-stone-500'}`} />
+                    {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  </div>
+                  {!sidebarCollapsed && badgeCount > 0 && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${badgeColor}`}>
+                      {badgeCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -363,11 +395,18 @@ export const AppShell: React.FC<AppShellProps> = ({
 
         <button
           onClick={() => onNavigate('tasks')}
-          className={`flex flex-col items-center justify-center w-14 h-full gap-1 text-[10px] font-medium ${
+          className={`relative flex flex-col items-center justify-center w-14 h-full gap-1 text-[10px] font-medium ${
             currentModule === 'tasks' ? 'text-amber-800 font-bold' : 'text-stone-500 hover:text-stone-900'
           }`}
         >
-          <CheckSquare className="w-4 h-4" />
+          <div className="relative">
+            <CheckSquare className="w-4 h-4" />
+            {overdueTasksCount > 0 && (
+              <span className="absolute -top-1 -right-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-rose-600 text-[8px] font-bold text-white">
+                {overdueTasksCount > 9 ? '9+' : overdueTasksCount}
+              </span>
+            )}
+          </div>
           <span>{t('navTasks', 'Tasks')}</span>
         </button>
 

@@ -1,16 +1,19 @@
 /**
- * Jaikrishna Industries — Unified Notification Router & Pipeline (functions/src/notification_router.ts)
- * 
+ * Jaikrishna Industries — Hardened Notification Router & Pipeline
+ * (functions/src/notification_router.ts)
+ *
  * Pipeline: Event / Scheduler Trigger -> Notification Intent ->
- *           ROUTER (Member Preferences, Quiet Hours in Asia/Kolkata, Snooze, Deduplication) ->
+ *           ROUTER (Atomic Dedupe, Quiet Hours IST, Snooze, Priority Spacing, Caps, Dead-Token Pruning) ->
  *           CHANNELS (In-App, Push via FCM, Email [DISABLED]) ->
  *           AUDIT LOG (notification_log)
  *
  * Guaranteed Invariants:
- * 1. AI assistant has ZERO access to this engine (stays read-only).
+ * 1. AI assistant has ZERO write access to this engine.
  * 2. All times evaluated strictly against Asia/Kolkata timezone.
  * 3. EMAIL_ENABLED=false keeps email delivery disabled.
- * 4. In-app and Push delivery channels are independent.
+ * 4. Atomic create-if-not-exists deduplication prevents check-then-create race conditions.
+ * 5. Automatic pruning of expired/unregistered FCM tokens.
+ * 6. Bundling applied when > 3 items of same category arrive in single run.
  */
 
 import * as admin from 'firebase-admin';
@@ -20,12 +23,13 @@ export interface NotificationIntent {
   recipientEmail: string;
   title: string;
   body: string;
-  type: 'task' | 'followup' | 'planning' | 'missed' | 'meta_ad' | 'system' | 'morning_plan';
+  type: string;
   priority?: 'low' | 'normal' | 'high' | 'critical';
   deepLink?: string;
   dedupeKey: string;
   category?: string;
   bypassQuietHours?: boolean;
+  minSpacingMinutes?: number;
   data?: Record<string, string>;
 }
 
@@ -35,31 +39,21 @@ export interface RouterResult {
   channelsDelivered: string[];
 }
 
-export const EMAIL_ENABLED = false; // Strictly disabled behind flag per architecture rule
+export const EMAIL_ENABLED = false;
 
-/**
- * Checks if current time in Asia/Kolkata falls within user's Quiet Hours.
- * Supports overnight ranges (e.g. 21:00 to 08:00) as well as daytime ranges.
- */
 export function isWithinQuietHours(
-  currentTimeIST: string, // "HH:mm"
-  start: string,           // "HH:mm"
-  end: string             // "HH:mm"
+  currentTimeIST: string,
+  start: string,
+  end: string
 ): boolean {
   if (start === end) return false;
-
   if (start < end) {
-    // Normal window: e.g. 13:00 to 14:00
     return currentTimeIST >= start && currentTimeIST < end;
   } else {
-    // Overnight window: e.g. 21:00 to 08:00
     return currentTimeIST >= start || currentTimeIST < end;
   }
 }
 
-/**
- * Returns the current time formatted as "HH:mm" in Asia/Kolkata
- */
 export function getCurrentTimeIST(date: Date = new Date()): string {
   const formatter = new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -70,8 +64,12 @@ export function getCurrentTimeIST(date: Date = new Date()): string {
   return formatter.format(date);
 }
 
+export function getTodayDateIST(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date);
+}
+
 /**
- * Routes a Notification Intent through deduplication, quiet hours, snooze, and channel filters.
+ * Routes a single notification intent through deduplication, quiet hours, snooze, spacing, and channels.
  */
 export async function routeNotificationIntent(
   db: admin.firestore.Firestore,
@@ -80,15 +78,30 @@ export async function routeNotificationIntent(
   const recipientEmail = intent.recipientEmail.toLowerCase().trim();
   const now = new Date();
   const nowIso = now.toISOString();
+  const nowMs = now.getTime();
   const currentTimeIST = getCurrentTimeIST(now);
+  const todayStrIST = getTodayDateIST(now);
 
-  // 1. Deduplication Check via notification_log collection
+  // 1. ATOMIC DEDUPLICATION: Attempt atomic create on notification_log
   const dedupeDocRef = db.collection('notification_log').doc(intent.dedupeKey);
-  const dedupeSnap = await dedupeDocRef.get();
-
-  if (dedupeSnap.exists) {
-    console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Duplicate delivery.`);
-    return { accepted: false, suppressionReason: 'dedupe_duplicate', channelsDelivered: [] };
+  try {
+    await dedupeDocRef.create({
+      id: intent.dedupeKey,
+      recipientEmail,
+      title: intent.title,
+      type: intent.type,
+      priority: intent.priority || 'normal',
+      dedupeKey: intent.dedupeKey,
+      status: 'pending',
+      createdAt: nowIso,
+    });
+  } catch (createErr: any) {
+    // Code 6 in gRPC / 'ALREADY_EXISTS' in Firestore
+    if (createErr?.code === 6 || String(createErr?.message).includes('ALREADY_EXISTS') || String(createErr).includes('already exists')) {
+      console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Duplicate delivery.`);
+      return { accepted: false, suppressionReason: 'dedupe_duplicate', channelsDelivered: [] };
+    }
+    console.warn(`[Router] Atomic dedupe check error: ${createErr?.message}`);
   }
 
   // 2. Fetch Member Preferences & Snooze State
@@ -99,20 +112,20 @@ export async function routeNotificationIntent(
   // 3. Check Snooze
   if (prefs?.snoozeUntil) {
     const snoozeTime = new Date(prefs.snoozeUntil).getTime();
-    if (now.getTime() < snoozeTime && !intent.bypassQuietHours) {
+    if (nowMs < snoozeTime && !intent.bypassQuietHours) {
       console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Member snoozed until ${prefs.snoozeUntil}`);
       await logNotificationOutcome(db, intent, 'suppressed', [], 'snoozed');
       return { accepted: false, suppressionReason: 'snoozed', channelsDelivered: [] };
     }
   }
 
-  // 4. Check Type Preference (e.g. perTask, missedTaskAlert)
+  // 4. Check Type Preference
   if (prefs?.types) {
     let typeAllowed = true;
-    if (intent.type === 'task' && prefs.types.perTask === false) typeAllowed = false;
-    if (intent.type === 'missed' && prefs.types.missedTaskAlert === false) typeAllowed = false;
-    if (intent.type === 'planning' && prefs.types.planningNotDone === false) typeAllowed = false;
-    if (intent.type === 'followup' && prefs.types.followUpDue === false) typeAllowed = false;
+    if (intent.type.startsWith('task') && prefs.types.perTask === false) typeAllowed = false;
+    if (intent.type.includes('missed') && prefs.types.missedTaskAlert === false) typeAllowed = false;
+    if (intent.type.startsWith('plan') && prefs.types.planningNotDone === false) typeAllowed = false;
+    if (intent.type.startsWith('cust') && prefs.types.followUpDue === false) typeAllowed = false;
 
     if (!typeAllowed && !intent.bypassQuietHours) {
       console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Member disabled notification type ${intent.type}`);
@@ -121,7 +134,41 @@ export async function routeNotificationIntent(
     }
   }
 
-  // 5. Check Quiet Hours (Asia/Kolkata)
+  // 5. Check Spacing (e.g. min 45m between overdue nudges on same task)
+  if (intent.minSpacingMinutes && intent.minSpacingMinutes > 0) {
+    const spacingKey = `last_spacing_${intent.category || intent.type}_${recipientEmail}`;
+    const spacingDocRef = db.collection('system_settings').doc(spacingKey);
+    const spacingSnap = await spacingDocRef.get();
+    if (spacingSnap.exists) {
+      const lastSentMs = spacingSnap.data()?.lastSentMs || 0;
+      const elapsedMins = (nowMs - lastSentMs) / (60 * 1000);
+      if (elapsedMins < intent.minSpacingMinutes && !intent.bypassQuietHours) {
+        console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Spacing limit (${Math.round(elapsedMins)}m < ${intent.minSpacingMinutes}m)`);
+        await logNotificationOutcome(db, intent, 'suppressed', [], 'spacing_limit');
+        return { accepted: false, suppressionReason: 'spacing_limit', channelsDelivered: [] };
+      }
+    }
+    // Update last sent time for spacing
+    await spacingDocRef.set({ lastSentMs: nowMs, lastDedupe: intent.dedupeKey }, { merge: true });
+  }
+
+  // 6. Check Daily Cap (default 10 for task_overdue, 30 total)
+  const capDocId = `daily_cap_${recipientEmail}_${todayStrIST}`;
+  const capDocRef = db.collection('notification_caps').doc(capDocId);
+  const capDoc = await capDocRef.get();
+  const capData = capDoc.exists ? capDoc.data() : {};
+  const currentTotal = capData?.total || 0;
+  const currentTypeTotal = capData?.[intent.type] || 0;
+  const typeMax = prefs?.caps?.[intent.type] ?? 10;
+  const totalMax = prefs?.caps?.total ?? 35;
+
+  if ((currentTypeTotal >= typeMax || currentTotal >= totalMax) && !intent.bypassQuietHours) {
+    console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Daily cap reached (${currentTypeTotal}/${typeMax} for ${intent.type})`);
+    await logNotificationOutcome(db, intent, 'suppressed', [], 'cap_exceeded');
+    return { accepted: false, suppressionReason: 'cap_exceeded', channelsDelivered: [] };
+  }
+
+  // 7. Check Quiet Hours (Asia/Kolkata)
   const quietHours = prefs?.quietHours;
   if (quietHours?.enabled && !intent.bypassQuietHours) {
     const isQuiet = isWithinQuietHours(currentTimeIST, quietHours.start || '21:00', quietHours.end || '08:00');
@@ -132,10 +179,10 @@ export async function routeNotificationIntent(
     }
   }
 
-  // 6. Deliver to Active Channels
+  // 8. Deliver to Active Channels
   const channelsDelivered: string[] = [];
 
-  // Channel A: In-App Notification (Always enabled unless explicitly toggled off)
+  // Channel A: In-App Notification (Stored with deep link & priority)
   const inAppAllowed = prefs?.channels?.inApp !== false;
   if (inAppAllowed) {
     try {
@@ -150,7 +197,7 @@ export async function routeNotificationIntent(
         deepLink: intent.deepLink || '/',
         dedupeKey: intent.dedupeKey,
         isRead: false,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
       });
       channelsDelivered.push('in_app');
     } catch (inAppErr) {
@@ -158,25 +205,27 @@ export async function routeNotificationIntent(
     }
   }
 
-  // Channel B: Push Notification via FCM
+  // Channel B: Push Notification via FCM (With dead-token auto cleanup & TTL)
   const pushAllowed = prefs?.channels?.push !== false;
   if (pushAllowed) {
     try {
-      const devicesSnap = await db
-        .collection('members')
-        .doc(recipientEmail)
-        .collection('devices')
-        .where('active', '==', true)
-        .get();
+      const memberDocRef = db.collection('members').doc(recipientEmail);
+      let devicesSnap = { docs: [] as any[] };
+      if (typeof memberDocRef.collection === 'function') {
+        devicesSnap = await memberDocRef
+          .collection('devices')
+          .where('active', '==', true)
+          .get();
+      }
 
-      const tokens = devicesSnap.docs.map((d) => d.data()?.token).filter(Boolean);
+      const devices = devicesSnap.docs.map((d) => ({ id: d.id, token: d.data()?.token })).filter((d) => Boolean(d.token));
 
-      if (tokens.length > 0) {
+      if (devices.length > 0) {
         const messaging = admin.messaging();
-        for (const token of tokens) {
+        for (const dev of devices) {
           try {
             await messaging.send({
-              token,
+              token: dev.token,
               notification: {
                 title: intent.title,
                 body: intent.body,
@@ -191,6 +240,7 @@ export async function routeNotificationIntent(
               webpush: {
                 headers: {
                   Urgency: intent.priority === 'critical' || intent.priority === 'high' ? 'high' : 'normal',
+                  TTL: '86400', // 24-hour expiration prevents ancient notification storms on wake
                 },
                 fcmOptions: {
                   link: intent.deepLink || '/',
@@ -199,6 +249,21 @@ export async function routeNotificationIntent(
             });
           } catch (pushErr: any) {
             console.warn(`[Router] Push to token failed:`, pushErr?.message);
+            // Automatic Dead-Token Pruning
+            if (
+              pushErr?.code === 'messaging/registration-token-not-registered' ||
+              pushErr?.code === 'messaging/invalid-registration-token' ||
+              String(pushErr?.message).includes('not registered')
+            ) {
+              console.log(`[Router] Pruning dead token for ${recipientEmail}: ${dev.id}`);
+              await db
+                .collection('members')
+                .doc(recipientEmail)
+                .collection('devices')
+                .doc(dev.id)
+                .delete()
+                .catch(() => null);
+            }
           }
         }
         channelsDelivered.push('push');
@@ -208,18 +273,60 @@ export async function routeNotificationIntent(
     }
   }
 
-  // Channel C: Email (Strictly Disabled)
-  if (EMAIL_ENABLED) {
-    // Adapter kept disabled per architecture contract
-  }
+  // Increment daily cap count
+  await capDocRef.set({
+    total: (currentTotal || 0) + 1,
+    [intent.type]: (currentTypeTotal || 0) + 1,
+    lastUpdated: nowIso,
+  }, { merge: true });
 
-  // 7. Audit Log Record (notification_log)
+  // 9. Update Audit Log Record
   await logNotificationOutcome(db, intent, 'delivered', channelsDelivered);
 
   return {
     accepted: true,
     channelsDelivered,
   };
+}
+
+/**
+ * Batched Notification Producer with Automatic Bundling:
+ * If > 3 intents of same category/type are provided, sends first 3 individually
+ * and bundles remaining into a single summary notification.
+ */
+export async function routeBundledIntents(
+  db: admin.firestore.Firestore,
+  intents: NotificationIntent[],
+  bundleSummaryBuilder: (remainingCount: number) => { title: string; body: string; deepLink: string }
+): Promise<RouterResult[]> {
+  const results: RouterResult[] = [];
+  if (intents.length <= 3) {
+    for (const intent of intents) {
+      results.push(await routeNotificationIntent(db, intent));
+    }
+    return results;
+  }
+
+  // Send first 3 individually
+  for (let i = 0; i < 3; i++) {
+    results.push(await routeNotificationIntent(db, intents[i]));
+  }
+
+  // Bundle remainder
+  const remaining = intents.slice(3);
+  const summary = bundleSummaryBuilder(remaining.length);
+  const bundleIntent: NotificationIntent = {
+    recipientEmail: intents[0].recipientEmail,
+    title: summary.title,
+    body: summary.body,
+    type: intents[0].type,
+    priority: 'normal',
+    deepLink: summary.deepLink,
+    dedupeKey: `bundle_${intents[0].type}_${getTodayDateIST()}`,
+  };
+
+  results.push(await routeNotificationIntent(db, bundleIntent));
+  return results;
 }
 
 /**
@@ -244,7 +351,7 @@ async function logNotificationOutcome(
       status,
       suppressionReason: suppressionReason || null,
       createdAt: new Date().toISOString(),
-    });
+    }, { merge: true });
   } catch (err) {
     console.warn('[Router] Failed to write notification_log audit:', err);
   }

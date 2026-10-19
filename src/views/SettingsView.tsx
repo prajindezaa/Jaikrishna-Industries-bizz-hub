@@ -264,14 +264,6 @@ export const SettingsView: React.FC = () => {
                 <Bell className="w-3.5 h-3.5 text-amber-800" />
                 <span>Send Test Push Notification</span>
               </button>
-
-              <button
-                onClick={handleTestEmail}
-                className="px-3 py-1.5 text-xs font-semibold text-stone-800 bg-stone-100 hover:bg-stone-200 rounded-lg inline-flex items-center gap-1.5 transition-colors"
-              >
-                <Mail className="w-3.5 h-3.5 text-rose-800" />
-                <span>Send Test Email Digest</span>
-              </button>
             </div>
 
             {/* Toggles */}
