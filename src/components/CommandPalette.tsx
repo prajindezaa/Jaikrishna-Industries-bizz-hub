@@ -78,7 +78,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       items: [
         {
           id: 'ask_ai',
-          label: 'Ask AI (Read-Only Gemini Assistant)',
+          label: 'Ask AI Assistant (Shortcut: A)',
           icon: Sparkles,
           action: () => onNavigate('assistant'),
         },

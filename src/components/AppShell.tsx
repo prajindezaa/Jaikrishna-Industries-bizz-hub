@@ -77,12 +77,16 @@ export const AppShell: React.FC<AppShellProps> = ({
     (o) => !o.isDeleted && (o.paymentStatus === 'Unpaid' || o.paymentStatus === 'Partial' || o.paymentStatus === 'Credit') && o.paymentDueDate && o.paymentDueDate <= todayStr
   ).length;
 
-  // Global Keyboard Shortcuts (N = New Customer, T = New Task, / = Search, Ctrl/Cmd+K = Palette)
+  // Global Keyboard Shortcuts (N = New Customer, T = New Task, A = AI Assistant, / = Search, Ctrl/Cmd+K = Palette)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing inside an input/textarea
+      // Don't trigger if user is typing inside an input/textarea/select
       const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      const isInput =
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable;
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -92,17 +96,36 @@ export const AppShell: React.FC<AppShellProps> = ({
 
       if (isInput) return;
 
+      const key = e.key.toLowerCase();
       if (e.key === '/') {
         e.preventDefault();
         setCommandPaletteOpen(true);
-      } else if (e.key.toLowerCase() === 'n') {
+      } else if (key === 'a') {
+        e.preventDefault();
+        onNavigate('assistant');
+      } else if (key === 'n') {
         e.preventDefault();
         onNavigate('customers');
         onOpenNewCustomer?.();
-      } else if (e.key.toLowerCase() === 't') {
+      } else if (key === 't') {
         e.preventDefault();
         onNavigate('tasks');
         onOpenNewTask?.();
+      } else if (key === 'd') {
+        e.preventDefault();
+        onNavigate('dashboard');
+      } else if (key === 'c') {
+        e.preventDefault();
+        onNavigate('customers');
+      } else if (key === 'o') {
+        e.preventDefault();
+        onNavigate('orders');
+      } else if (key === 'p') {
+        e.preventDefault();
+        onNavigate('planning');
+      } else if (key === 'm') {
+        e.preventDefault();
+        onNavigate('meta_ads');
       }
     };
 
@@ -188,9 +211,9 @@ export const AppShell: React.FC<AppShellProps> = ({
               {!sidebarCollapsed && (
                 <div className="flex items-center justify-between flex-1 text-xs">
                   <span>{t('navAssistant', 'AI Assistant')}</span>
-                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/60 text-amber-900">
-                    Flash
-                  </span>
+                  <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/80 text-amber-900 border border-amber-200/80 shadow-2xs font-semibold">
+                    A
+                  </kbd>
                 </div>
               )}
             </button>

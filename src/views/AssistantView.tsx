@@ -47,6 +47,12 @@ export const AssistantView: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus input field on open
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -430,11 +436,12 @@ export const AssistantView: React.FC = () => {
           </button>
 
           <input
+            ref={inputRef}
             type="text"
             placeholder={
               isListening
                 ? 'Listening to your voice in English or Tamil...'
-                : 'Ask Gemini about leads, orders, schedules, or team settings...'
+                : 'Ask Gemini about leads, orders, schedules, or team settings (Enter to send)...'
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}
