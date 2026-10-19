@@ -14,6 +14,7 @@ import { DashboardView } from './views/DashboardView';
 import { CustomersView } from './views/CustomersView';
 import { TasksView } from './views/TasksView';
 import { PlanningView } from './views/PlanningView';
+import { MetaAdsView } from './views/MetaAdsView';
 import { OrdersView } from './views/OrdersView';
 import { TrashView } from './views/TrashView';
 import { SettingsView } from './views/SettingsView';
@@ -110,6 +111,7 @@ const MainAppContent: React.FC = () => {
       {currentModule === 'customers' && <CustomersView />}
       {currentModule === 'tasks' && <TasksView />}
       {currentModule === 'planning' && <PlanningView />}
+      {currentModule === 'meta_ads' && <MetaAdsView />}
       {currentModule === 'orders' && <OrdersView />}
       {currentModule === 'automations' && <AutomationRulesView />}
       {currentModule === 'trash' && <TrashView />}

@@ -51,6 +51,7 @@ interface ParsedImportRow {
   dailyBudget: number | null;
   placements: string[];
   conversations: number | null;
+  costPerConv: number | null;
   views: number | null;
   viewers: number | null;
   linkClicks: number | null;
@@ -117,47 +118,54 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
 
 
   // 1. Download Master Excel Template with Instructions sheet
+  // 1. Download Master Excel Template with Instructions sheet matching Meta Ads Export exactly
   const handleDownloadTemplate = () => {
     const sampleRows = [
       {
-        'Ad Name': 'Diwali 2025 Bhimseni Camphor Wholesale',
-        'Goal': 'Messages/Conversations',
-        'Occasion': 'Diwali 2025',
-        'Start Date (DD/MM/YYYY)': '15/10/2025 09:00',
-        'End Date (DD/MM/YYYY)': '28/10/2025 21:00',
-        'Total Spent (INR)': '15,000',
-        'Daily Budget (INR)': '1,200',
-        'Placements': 'Facebook Feed, Instagram Feed, Reels',
-        'Messaging Conversations Started': '142',
-        'Impressions (Views)': '45,000',
-        'Reach (Viewers)': '32,000',
-        'Link Clicks': '1,120',
-        'Post Engagements': '2,400',
-        'Post Reactions': '1,800',
-        'Post Comments': '450',
-        'Post Shares': '120',
-        'Post Saves': '30',
+        'Reporting starts': '2026-09-17',
+        'Reporting ends': '2026-10-16',
+        'Campaign name': '[27/09/2026] Promoting https://facebook.com/61586218173998',
+        'Campaign delivery': 'completed',
+        'Attribution setting': '7-day click or 1-day view',
+        'Results': '198',
+        'Result indicator': 'actions:onsite_conversion.messaging_conversation_started_7d',
+        'Cost per results': '3.59',
+        'Ad set budget': '240',
+        'Ad set budget type': 'Daily',
+        'Amount spent (INR)': '710.93',
+        'Impressions': '14745',
+        'Reach': '8204',
+        'Ends': '2026-09-30',
+        'Link clicks': '',
+        'Post engagements': '',
+        'Post reactions': '',
+        'Post comments': '',
+        'Post shares': '',
+        'Post saves': '',
         'Lessons / Notes': 'Festival packaging visual gave 2.8x higher response than static image.',
         'Rating (1-5)': '5',
       },
       {
-        'Ad Name': 'Panguni Uthiram 2025 Temple Supply Special',
-        'Goal': 'Messages/Conversations',
-        'Occasion': 'Panguni Uthiram',
-        'Start Date (DD/MM/YYYY)': '05/03/2025 08:00',
-        'End Date (DD/MM/YYYY)': '18/03/2025 20:00',
-        'Total Spent (INR)': '12,500',
-        'Daily Budget (INR)': '1,000',
-        'Placements': 'Instagram Feed, Facebook Feed',
-        'Messaging Conversations Started': '88',
-        'Impressions (Views)': '28,500',
-        'Reach (Viewers)': '22,000',
-        'Link Clicks': '750',
-        'Post Engagements': '1,200',
-        'Post Reactions': '950',
-        'Post Comments': '180',
-        'Post Shares': '50',
-        'Post Saves': '20',
+        'Reporting starts': '2026-09-17',
+        'Reporting ends': '2026-10-16',
+        'Campaign name': '[11/10/2026] Promoting https://api.whatsapp.com/send',
+        'Campaign delivery': 'recently_completed',
+        'Attribution setting': '7-day click or 1-day view',
+        'Results': '132',
+        'Result indicator': 'actions:onsite_conversion.messaging_conversation_started_7d',
+        'Cost per results': '4.94',
+        'Ad set budget': '220',
+        'Ad set budget type': 'Daily',
+        'Amount spent (INR)': '651.53',
+        'Impressions': '11273',
+        'Reach': '6939',
+        'Ends': '2026-10-15',
+        'Link clicks': '',
+        'Post engagements': '',
+        'Post reactions': '',
+        'Post comments': '',
+        'Post shares': '',
+        'Post saves': '',
         'Lessons / Notes': 'Direct temple trust inquiries from Madurai and Tirunelveli.',
         'Rating (1-5)': '4',
       },
@@ -166,22 +174,25 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
     const wsData = XLSX.utils.json_to_sheet(sampleRows);
 
     const instructions = [
-      ['JAIKRISHNA INDUSTRIES - PAST META ADS BULK IMPORT GUIDE'],
+      ['JAIKRISHNA INDUSTRIES - META ADS EXCEL IMPORT GUIDE'],
       [''],
-      ['COLUMN RULES & SPECIFICATIONS:'],
-      ['1. Ad Name (Required): Unique campaign title.'],
-      ['2. Start Date & End Date (Required): Formatted as DD/MM/YYYY HH:mm or YYYY-MM-DD. End date must be on or before today.'],
-      ['3. Total Spent (INR) (Required): Actual spend invoiced by Meta. Accepts Indian numbering like 15,000 or ₹15,000.'],
-      ['4. Optional Results: Leave blank for "Not recorded" (—) state. Real 0 is stored as 0.'],
-      ['5. One-Customer-One-Ad Rule: Customer attribution can be linked from the ad detail page or during customer import using Campaign Name.'],
-      ['6. Undo: An import batch ID is attached to all imported ads so the batch can be cleanly moved to Trash in one click.'],
+      ['COLUMN RULES & SPECIFICATIONS (Direct Meta Ads Export Compatible):'],
+      ['1. Campaign name (Required): Unique campaign title exported directly from Meta Ads Manager.'],
+      ['2. Reporting starts / Starts: Start date of campaign or reporting period (YYYY-MM-DD or DD/MM/YYYY).'],
+      ['3. Ends / Reporting ends: Campaign end date (YYYY-MM-DD or DD/MM/YYYY).'],
+      ['4. Amount spent (INR) / Total Spent (Required): Total amount billed by Meta.'],
+      ['5. Results / Messaging Conversations: Number of messaging conversations or leads started.'],
+      ['6. Ad set budget / Daily Budget: Daily or total budget configured in Meta.'],
+      ['7. Impressions & Reach: Views and unique viewers reached.'],
+      ['8. Cost per results: Will be auto-calculated if left blank or preserved from Meta.'],
+      ['9. Undo: An import batch ID is attached to all imported ads so the batch can be cleanly moved to Trash in one click.'],
     ];
     const wsInstructions = XLSX.utils.aoa_to_sheet(instructions);
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, wsData, 'Past Ads Template');
+    XLSX.utils.book_append_sheet(wb, wsData, 'Meta Ads Export');
     XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
-    XLSX.writeFile(wb, `jaikrishna-past-ads-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `meta-ads-export-template-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // 2. File Upload Handler
@@ -193,10 +204,10 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
     reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const firstSheetName = wb.SheetNames[0];
         const ws = wb.Sheets[firstSheetName];
-        const json = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+        const json = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'yyyy-mm-dd' }) as any[][];
 
         if (!json || json.length < 2) {
           alert('File contains no data rows.');
@@ -209,30 +220,94 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
         setRawHeaders(headers);
         setRawDataRows(dataRows);
 
-        // Auto-detect columns (matching Meta Ads Manager and our template)
+        // Auto-detect columns (matching standard Meta Ads Manager export & custom templates)
         const autoMap: Record<string, number> = {};
         headers.forEach((h, idx) => {
-          const l = h.toLowerCase();
-          if (l.includes('campaign name') || l.includes('ad name') || l === 'name') autoMap['name'] = idx;
-          else if (l.includes('amount spent') || l.includes('total spent') || l.includes('spend') || l === 'cost') autoMap['totalSpent'] = idx;
-          else if (l.includes('messaging conversations') || l.includes('conversations') || l.includes('results')) autoMap['conversations'] = idx;
-          else if (l.includes('impressions') || l.includes('views')) autoMap['views'] = idx;
-          else if (l.includes('reach') || l.includes('viewers')) autoMap['viewers'] = idx;
-          else if (l.includes('link clicks') || l.includes('clicks')) autoMap['linkClicks'] = idx;
-          else if (l.includes('post reactions') || l.includes('reactions')) autoMap['reactions'] = idx;
-          else if (l.includes('post comments') || l.includes('comments')) autoMap['comments'] = idx;
-          else if (l.includes('post shares') || l.includes('shares')) autoMap['shares'] = idx;
-          else if (l.includes('post saves') || l.includes('saves')) autoMap['saves'] = idx;
-          else if (l.includes('post engagements') || l.includes('engagements')) autoMap['engagements'] = idx;
-          else if (l.includes('start date') || l.includes('reporting starts') || l === 'starts') autoMap['startDate'] = idx;
-          else if (l.includes('end date') || l.includes('reporting ends') || l === 'ends') autoMap['endDate'] = idx;
-          else if (l.includes('daily budget') || l.includes('budget')) autoMap['dailyBudget'] = idx;
-          else if (l.includes('occasion') || l.includes('festival')) autoMap['occasion'] = idx;
-          else if (l.includes('goal') || l.includes('objective')) autoMap['goal'] = idx;
-          else if (l.includes('placements')) autoMap['placements'] = idx;
-          else if (l.includes('lessons') || l.includes('notes')) autoMap['lessons'] = idx;
-          else if (l.includes('rating')) autoMap['rating'] = idx;
+          const l = h.toLowerCase().trim();
+          // Campaign Name
+          if (l === 'campaign name' || l.includes('campaign name') || l === 'ad name' || l.includes('ad name') || l === 'name') {
+            if (autoMap['name'] === undefined) autoMap['name'] = idx;
+          }
+          // Amount spent
+          else if (l.includes('amount spent') || l.includes('total spent') || l.includes('spend') || l === 'cost') {
+            if (autoMap['totalSpent'] === undefined) autoMap['totalSpent'] = idx;
+          }
+          // Results / Messaging conversations started
+          else if (l === 'results' || l.includes('messaging conversations') || l.includes('conversations started') || l.includes('conversations')) {
+            if (autoMap['conversations'] === undefined) autoMap['conversations'] = idx;
+          }
+          // Impressions
+          else if (l === 'impressions' || l.includes('impressions') || l === 'views') {
+            if (autoMap['views'] === undefined) autoMap['views'] = idx;
+          }
+          // Reach
+          else if (l === 'reach' || l.includes('reach') || l === 'viewers') {
+            if (autoMap['viewers'] === undefined) autoMap['viewers'] = idx;
+          }
+          // Cost per results
+          else if (l.includes('cost per result') || l.includes('cost per conversation') || l.includes('cost/conv')) {
+            if (autoMap['costPerConv'] === undefined) autoMap['costPerConv'] = idx;
+          }
+          // Link clicks
+          else if (l.includes('link click') || l === 'link clicks' || l === 'clicks') {
+            if (autoMap['linkClicks'] === undefined) autoMap['linkClicks'] = idx;
+          }
+          // Engagements & Reactions
+          else if (l.includes('post reaction') || l.includes('reactions')) {
+            if (autoMap['reactions'] === undefined) autoMap['reactions'] = idx;
+          }
+          else if (l.includes('post comment') || l.includes('comments')) {
+            if (autoMap['comments'] === undefined) autoMap['comments'] = idx;
+          }
+          else if (l.includes('post share') || l.includes('shares')) {
+            if (autoMap['shares'] === undefined) autoMap['shares'] = idx;
+          }
+          else if (l.includes('post save') || l.includes('saves')) {
+            if (autoMap['saves'] === undefined) autoMap['saves'] = idx;
+          }
+          else if (l.includes('post engagement') || l.includes('engagements')) {
+            if (autoMap['engagements'] === undefined) autoMap['engagements'] = idx;
+          }
+          // Start date: prefer "Reporting starts" or "Start date"
+          else if (l === 'reporting starts' || l.includes('reporting start') || l === 'start date' || l.includes('starts')) {
+            if (autoMap['startDate'] === undefined) autoMap['startDate'] = idx;
+          }
+          // End date: prefer "Ends" (exact campaign end) or "Reporting ends"
+          else if (l === 'ends' || l.includes('reporting ends') || l === 'end date' || l.includes('ends')) {
+            // prioritize 'ends' over 'reporting ends' if both exist
+            if (autoMap['endDate'] === undefined || l === 'ends') autoMap['endDate'] = idx;
+          }
+          // Daily Budget
+          else if (l.includes('ad set budget') || l.includes('daily budget') || l.includes('budget')) {
+            if (autoMap['dailyBudget'] === undefined) autoMap['dailyBudget'] = idx;
+          }
+          // Occasion / festival
+          else if (l.includes('occasion') || l.includes('festival')) {
+            if (autoMap['occasion'] === undefined) autoMap['occasion'] = idx;
+          }
+          // Goal
+          else if (l.includes('goal') || l.includes('objective')) {
+            if (autoMap['goal'] === undefined) autoMap['goal'] = idx;
+          }
+          // Placements
+          else if (l.includes('placements') || l.includes('placement')) {
+            if (autoMap['placements'] === undefined) autoMap['placements'] = idx;
+          }
+          // Lessons / Notes
+          else if (l.includes('lessons') || l.includes('notes')) {
+            if (autoMap['lessons'] === undefined) autoMap['lessons'] = idx;
+          }
+          // Rating
+          else if (l.includes('rating')) {
+            if (autoMap['rating'] === undefined) autoMap['rating'] = idx;
+          }
         });
+
+        // If Ends column exists in headers, make sure it is chosen over reporting ends for campaign duration
+        const endsIdx = headers.findIndex((h) => h.toLowerCase().trim() === 'ends');
+        if (endsIdx !== -1) {
+          autoMap['endDate'] = endsIdx;
+        }
 
         setColumnMap(autoMap);
         setStep('mapping');
@@ -270,6 +345,7 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
       const totalSpent = parseIndianNumber(getVal('totalSpent'));
       const dailyBudget = parseIndianNumber(getVal('dailyBudget'));
       const conversations = parseIndianNumber(getVal('conversations'));
+      const costPerConv = parseIndianNumber(getVal('costPerConv'));
       const views = parseIndianNumber(getVal('views'));
       const viewers = parseIndianNumber(getVal('viewers'));
       const linkClicks = parseIndianNumber(getVal('linkClicks'));
@@ -359,6 +435,7 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
         dailyBudget,
         placements,
         conversations,
+        costPerConv,
         views,
         viewers,
         linkClicks,
@@ -396,7 +473,8 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
 
       const batchId = `import_${Date.now()}`;
       const adsPayload = rowsToImport.map((r) => {
-        const costPerConv = calculateCostPerConversation(r.totalSpent, r.conversations);
+        const calculatedCost = calculateCostPerConversation(r.totalSpent, r.conversations);
+        const costPerConv = r.costPerConv !== null && r.costPerConv !== undefined ? r.costPerConv : calculatedCost;
         const freq = calculateFrequency(r.views, r.viewers);
         const ctr = calculateCtr(r.linkClicks, r.views);
 
@@ -636,19 +714,20 @@ export const BulkImportPastAdsModal: React.FC<BulkImportPastAdsModalProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-80 overflow-y-auto p-2 border border-stone-200 rounded-xl bg-stone-50">
                     {[
-                      { key: 'name', label: 'Ad / Campaign Name', required: true },
-                      { key: 'totalSpent', label: 'Total Spent (INR)', required: true },
-                      { key: 'startDate', label: 'Start Date (DD/MM/YYYY)', required: true },
-                      { key: 'endDate', label: 'End Date (DD/MM/YYYY)', required: true },
-                      { key: 'conversations', label: 'Messaging Conversations Started' },
-                      { key: 'views', label: 'Views (Impressions)' },
-                      { key: 'viewers', label: 'Viewers (Reach)' },
+                      { key: 'name', label: 'Campaign Name / Ad Name', required: true },
+                      { key: 'totalSpent', label: 'Amount Spent / Total Spent (INR)', required: true },
+                      { key: 'startDate', label: 'Reporting Starts / Start Date', required: true },
+                      { key: 'endDate', label: 'Ends / Reporting Ends', required: true },
+                      { key: 'conversations', label: 'Results / Messaging Conversations' },
+                      { key: 'costPerConv', label: 'Cost Per Results / Cost Per Conv (INR)' },
+                      { key: 'views', label: 'Impressions / Views' },
+                      { key: 'viewers', label: 'Reach / Viewers' },
                       { key: 'linkClicks', label: 'Link Clicks' },
                       { key: 'engagements', label: 'Post Engagements' },
                       { key: 'reactions', label: 'Post Reactions' },
                       { key: 'comments', label: 'Post Comments' },
                       { key: 'shares', label: 'Post Shares' },
-                      { key: 'dailyBudget', label: 'Daily Budget (INR)' },
+                      { key: 'dailyBudget', label: 'Ad Set Budget / Daily Budget (INR)' },
                       { key: 'occasion', label: 'Occasion / Festival' },
                       { key: 'goal', label: 'Goal / Objective' },
                       { key: 'lessons', label: 'Lessons Learned / Notes' },

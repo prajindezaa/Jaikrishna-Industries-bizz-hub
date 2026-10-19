@@ -570,6 +570,7 @@ export type ActiveModule =
   | 'customers'
   | 'tasks'
   | 'planning'
+  | 'meta_ads'
   | 'orders'
   | 'trash'
   | 'settings'

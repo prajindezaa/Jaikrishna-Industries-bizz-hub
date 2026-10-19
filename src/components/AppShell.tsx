@@ -24,6 +24,7 @@ import {
   User as UserIcon,
   ShieldCheck,
   Zap,
+  Megaphone,
 } from 'lucide-react';
 import { ActiveModule } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -114,6 +115,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'customers' as ActiveModule, label: t('navCustomers', 'Customers'), icon: Users },
     { id: 'tasks' as ActiveModule, label: t('navTasks', 'Tasks'), icon: CheckSquare },
     { id: 'planning' as ActiveModule, label: t('navPlanning', 'Planning Hub'), icon: Calendar },
+    { id: 'meta_ads' as ActiveModule, label: t('navMetaAds', 'Meta Ads'), icon: Megaphone },
     { id: 'orders' as ActiveModule, label: t('navOrders', 'Orders'), icon: ShoppingBag },
     { id: 'automations' as ActiveModule, label: t('navAutomations', 'Automation Rules'), icon: Zap },
     { id: 'trash' as ActiveModule, label: t('navTrash', 'Trash (30d)'), icon: Trash2 },
@@ -211,6 +213,9 @@ export const AppShell: React.FC<AppShellProps> = ({
               } else if (item.id === 'orders' && pendingDispatchCount > 0) {
                 badgeCount = pendingDispatchCount;
                 badgeColor = 'bg-rose-600 text-white';
+              } else if (item.id === 'meta_ads' && adsWaitingResultsCount > 0) {
+                badgeCount = adsWaitingResultsCount;
+                badgeColor = 'bg-amber-600 text-white';
               }
 
               return (

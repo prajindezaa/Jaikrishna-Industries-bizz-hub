@@ -18,6 +18,7 @@ import {
   LogOut,
   X,
   PlusCircle,
+  Megaphone,
 } from 'lucide-react';
 import { ActiveModule } from '../types';
 import { useLanguage } from '../context/LanguageContext';
@@ -66,6 +67,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         { id: 'customers', label: t('navCustomers', 'Customers (CRM)'), icon: Users, action: () => onNavigate('customers') },
         { id: 'tasks', label: t('navTasks', 'Tasks & Planner'), icon: CheckSquare, action: () => onNavigate('tasks') },
         { id: 'planning', label: t('navPlanning', 'Planning Hub'), icon: Calendar, action: () => onNavigate('planning') },
+        { id: 'meta_ads', label: t('navMetaAds', 'Meta Ads Hub'), icon: Megaphone, action: () => onNavigate('meta_ads') },
         { id: 'orders', label: t('navOrders', 'Orders'), icon: ShoppingBag, action: () => onNavigate('orders') },
         { id: 'trash', label: t('navTrash', 'Trash (30-day retention)'), icon: Trash2, action: () => onNavigate('trash') },
         { id: 'settings', label: t('navSettings', 'Settings'), icon: Settings, action: () => onNavigate('settings') },

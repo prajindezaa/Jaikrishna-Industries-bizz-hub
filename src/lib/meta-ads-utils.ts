@@ -351,6 +351,28 @@ export function parseIndianNumber(val: any): number | null {
  */
 export function parseFlexibleDate(val: any): { dateISO: string | null; error?: string } {
   if (val === null || val === undefined) return { dateISO: null };
+
+  // If already a JavaScript Date object
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return { dateISO: null, error: 'Invalid Date object' };
+    return { dateISO: val.toISOString() };
+  }
+
+  // Handle Excel Serial Date Number (e.g. 45552 or "45552")
+  // Excel epoch begins at 1899-12-30. Serial numbers around 45000-47000 correspond to years 2023-2028.
+  if (typeof val === 'number' || (/^\d{5}(?:\.\d+)?$/.test(String(val).trim()))) {
+    const num = Number(val);
+    if (!isNaN(num) && num > 20000 && num < 70000) {
+      // Excel 1900 leap year bug offset
+      const excelEpochMs = new Date(Date.UTC(1899, 11, 30)).getTime();
+      const dateMs = Math.round(excelEpochMs + num * 86400 * 1000);
+      const d = new Date(dateMs);
+      if (!isNaN(d.getTime())) {
+        return { dateISO: d.toISOString() };
+      }
+    }
+  }
+
   const str = String(val).trim();
   if (!str) return { dateISO: null };
 
