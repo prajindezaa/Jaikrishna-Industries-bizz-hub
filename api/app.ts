@@ -25,6 +25,39 @@ function getFieldValue() {
 const app = express();
 app.use(express.json());
 
+// Strict Origin & CORS Middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  const allowed = [
+    'https://jaikrishnabizzhub.in',
+    'https://www.jaikrishnabizzhub.in',
+    'https://jaikrishna-industries-bizz-hub.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+  ];
+
+  if (origin) {
+    const clean = origin.trim().replace(/\/+$/, '');
+    if (allowed.includes(clean)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    } else {
+      res.status(403).json({ error: 'Origin not allowed by Jaikrishna Industries security policy' });
+      return;
+    }
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 // Global Rate Limiter: 60 requests per minute
 const standardRateLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60 * 1000 });
 

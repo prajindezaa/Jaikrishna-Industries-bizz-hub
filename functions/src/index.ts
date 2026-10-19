@@ -49,6 +49,9 @@ if (!admin.apps.length) {
 
 const db = getFirestore();
 
+// Canonical origin for deep links and email CTAs (configurable via environment variable)
+const APP_URL = (process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '');
+
 // 1. Scheduled Reminder Engine (Every 5 Minutes)
 export const checkRemindersScheduled = onSchedule(
   {
@@ -346,7 +349,7 @@ async function sendMemberDigestEmail(email: string, tasks: admin.firestore.Docum
         ${taskListHtml}
       </ul>
       <p style="margin-top: 20px;">
-        <a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks" style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 12px;">Open Tasks in Hub</a>
+        <a href="${APP_URL}/tasks" style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 12px;">Open Tasks in Hub</a>
       </p>
     </div>
   `;
@@ -669,15 +672,15 @@ export async function executeMorningPlanCheck() {
     // Email Dispatch via Resend (with Cap Fallback to Push/In-App)
     if (memberCfg.channels?.email) {
       const taskListHtml = tasksTodaySnap.docs
-        .map((d) => `<li><a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}"><strong>${d.data().title}</strong></a> (${d.data().startTime || '10:00'})</li>`)
+        .map((d) => `<li><a href="${APP_URL}/tasks?id=${d.id}"><strong>${d.data().title}</strong></a> (${d.data().startTime || '10:00'})</li>`)
         .join('');
 
       const overdueHtml = overdueTasksSnap.docs
-        .map((d) => `<li style="color: #b91c1c;"><a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}"><strong>${d.data().title}</strong></a> (Due: ${d.data().date})</li>`)
+        .map((d) => `<li style="color: #b91c1c;"><a href="${APP_URL}/tasks?id=${d.id}"><strong>${d.data().title}</strong></a> (Due: ${d.data().date})</li>`)
         .join('');
 
       const adsHtml = adsWaitingSnap.docs
-        .map((d) => `<li><a href="https://jaikrishna-industries-bizz-hub.vercel.app/planning">Campaign: <strong>${d.data().name}</strong></a> (Waiting for result)</li>`)
+        .map((d) => `<li><a href="${APP_URL}/planning">Campaign: <strong>${d.data().name}</strong></a> (Waiting for result)</li>`)
         .join('');
 
       const festHtml = festivalsSnap.docs
@@ -694,7 +697,7 @@ export async function executeMorningPlanCheck() {
           ${adsWaitingSnap.empty ? '' : `<h3 style="color: #d97706;">📢 Meta Ads Needing Action</h3><ul>${adsHtml}</ul>`}
           ${festHtml ? `<h3 style="color: #4b5563;">🪔 Upcoming Festivals</h3><ul>${festHtml}</ul>` : ''}
           <p style="margin-top: 25px;">
-            <a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks" style="background: #881337; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Open Jaikrishna Business Hub</a>
+            <a href="${APP_URL}/tasks" style="background: #881337; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Open Jaikrishna Business Hub</a>
           </p>
         </div>
       `;

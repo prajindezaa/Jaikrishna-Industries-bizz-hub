@@ -193,8 +193,31 @@ export const PushOnboarding: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 1. Persistent Banner for Attention (if not granted & not dismissed) */}
-      {permission !== 'granted' && !dismissedBanner && (
+      {/* 1. Migration Notice & Re-enable Push Banner */}
+      {typeof window !== 'undefined' && window.location.hostname.includes('jaikrishnabizzhub.in') && permission !== 'granted' && !dismissedBanner && (
+        <div className="bg-[#881337]/90 border border-amber-300/40 rounded-xl p-4 flex items-start justify-between gap-3 text-amber-100 shadow-md">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <span className="font-bold text-white">We moved to jaikrishnabizzhub.in: </span>
+              Please turn on push notifications again on this device. Web push permissions are securely tied to each domain origin.
+              <div className="mt-1 text-xs text-amber-200/90">
+                If you previously installed the app from the old address, tap <strong>Install App</strong> or (on iPhone) tap Share → <strong>Add to Home Screen</strong> to reinstall the updated PWA.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleDismissBanner}
+            className="text-amber-300 hover:text-white transition-colors p-1"
+            title="Dismiss banner"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Standard Permission Banner for other hosts / fallback */}
+      {(!window.location.hostname.includes('jaikrishnabizzhub.in') || permission !== 'granted') && !dismissedBanner && (
         <div className="bg-amber-900/40 border border-amber-600/40 rounded-xl p-4 flex items-start justify-between gap-3 text-amber-200">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />

@@ -289,22 +289,24 @@ export async function executeRule7MorningPlan(
           return displayItems.join('');
         };
 
+        const appUrl = (process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '');
+
         const todayTaskItems = tasksTodaySnap.docs.map((d) => ({
           id: d.id,
           title: d.data().title || d.id,
-          link: `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`,
+          link: `${appUrl}/tasks?id=${d.id}`,
         }));
 
         const overdueTaskItems = overdueTasks.map((d) => ({
           id: d.id,
           title: d.data().title || d.id,
-          link: `https://jaikrishna-industries-bizz-hub.vercel.app/tasks?id=${d.id}`,
+          link: `${appUrl}/tasks?id=${d.id}`,
         }));
 
         const newLeadItems = newLeads.map((d) => ({
           id: d.id,
           title: d.data().companyName || d.data().contactPerson || d.id,
-          link: `https://jaikrishna-industries-bizz-hub.vercel.app/customers?id=${d.id}`,
+          link: `${appUrl}/customers?id=${d.id}`,
         }));
 
         const emailHtml = `
@@ -315,7 +317,7 @@ export async function executeRule7MorningPlan(
             ${overdueTaskItems.length > 0 ? `<h3 style="color: #b91c1c;">⚠️ Overdue Tasks (${overdueTaskItems.length})</h3><ul>${formatItemList(overdueTaskItems)}</ul>` : ''}
             ${newLeadItems.length > 0 ? `<h3>New Leads (${newLeadItems.length})</h3><ul>${formatItemList(newLeadItems)}</ul>` : ''}
             <p style="margin-top: 20px;">
-              <a href="https://jaikrishna-industries-bizz-hub.vercel.app/tasks" style="background: #881337; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Open Tasks</a>
+              <a href="${appUrl}/tasks" style="background: #881337; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Open Tasks</a>
             </p>
           </div>
         `;

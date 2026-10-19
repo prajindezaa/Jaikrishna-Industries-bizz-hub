@@ -13,7 +13,56 @@
       "maxDuration": 60
     }
   },
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.jaikrishnabizzhub.in"
+        }
+      ],
+      "destination": "https://jaikrishnabizzhub.in/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "jaikrishna-industries-bizz-hub.vercel.app"
+        }
+      ],
+      "destination": "https://jaikrishnabizzhub.in/:path*",
+      "permanent": true
+    }
+  ],
   "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=()"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains"
+        }
+      ]
+    },
     {
       "source": "/(sw.js|firebase-messaging-sw.js|registerSW.js)",
       "headers": [
@@ -30,11 +79,15 @@
   ],
   "rewrites": [
     {
+      "source": "/__/auth/(.*)",
+      "destination": "https://jaikrishna-industries.firebaseapp.com/__/auth/$1"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/|sw\\.js|firebase-messaging-sw\\.js|registerSW\\.js|workbox-.*\\.js|manifest\\.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|ico|css|js|woff|woff2)$).*)",
+      "source": "/((?!api/|__\\/auth/|sw\\.js|firebase-messaging-sw\\.js|registerSW\\.js|workbox-.*\\.js|manifest\\.webmanifest|robots\\.txt|icon\\.svg|.*\\.(?:png|jpg|jpeg|gif|svg|ico|css|js|woff|woff2)$).*)",
       "destination": "/index.html"
     }
   ]

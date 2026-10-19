@@ -57,7 +57,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## Deployment
 
 * **Frontend & Serverless API**: Connect GitHub repository directly to **Vercel** with the Vite preset.
-  * **Live URL**: [https://jaikrishna-industries-bizz-hub.vercel.app](https://jaikrishna-industries-bizz-hub.vercel.app)
+  * **Canonical Production URL**: [https://jaikrishnabizzhub.in](https://jaikrishnabizzhub.in)
+  * **Secondary URL (301 Redirect)**: `https://www.jaikrishnabizzhub.in`
+  * **Transition Redirect (90 Days)**: `https://jaikrishna-industries-bizz-hub.vercel.app` → `https://jaikrishnabizzhub.in`
 * **Firestore Rules & Cloud Functions**: Deploy via Firebase CLI:
   ```bash
   firebase deploy --only firestore:rules,firestore:indexes,functions
