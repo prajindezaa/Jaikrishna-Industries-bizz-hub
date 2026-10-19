@@ -89,13 +89,13 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, isOpe
     setFeedbackMsg(null);
     try {
       await updateOrderDispatch(order.id, {
-        transporter: transporter.trim() || undefined,
-        lrNumber: lrNumber.trim() || undefined,
-        vehicleNumber: vehicleNumber.trim() || undefined,
+        transporter: transporter.trim() || '',
+        lrNumber: lrNumber.trim() || '',
+        vehicleNumber: vehicleNumber.trim() || '',
         boxesCount: Number(boxesCount) || 1,
-        dispatchDate: dispatchDate || undefined,
-        deliveryDate: deliveryDate || undefined,
-        notes: dispatchNotes.trim() || undefined,
+        dispatchDate: dispatchDate || '',
+        deliveryDate: deliveryDate || '',
+        notes: dispatchNotes.trim() || '',
       });
       setFeedbackMsg({ type: 'success', text: 'Dispatch details updated successfully!' });
     } catch (err: any) {
@@ -110,7 +110,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, isOpe
     setIsSavingStatus(true);
     setFeedbackMsg(null);
     try {
-      await changeOrderDeliveryStatus(order.id, nextDeliveryStatus, statusReason.trim() || undefined);
+      await changeOrderDeliveryStatus(order.id, nextDeliveryStatus, statusReason.trim() || '');
       setFeedbackMsg({
         type: 'success',
         text: `Status updated to ${nextDeliveryStatus}! ${nextDeliveryStatus === 'Delivered' ? '(Feedback task created)' : ''}`,
@@ -135,7 +135,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, isOpe
       await recordOrderPayment(order.id, {
         amount: paymentAmount,
         mode: paymentMode,
-        reference: paymentRef.trim() || undefined,
+        reference: paymentRef.trim() || '',
         date: paymentDate,
       });
       setFeedbackMsg({ type: 'success', text: `₹${paymentAmount.toLocaleString('en-IN')} payment logged successfully!` });

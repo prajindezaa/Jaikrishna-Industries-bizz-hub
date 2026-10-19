@@ -280,8 +280,8 @@ export const MetaAdResultsModal: React.FC<MetaAdResultsModalProps> = ({
       ctr: effectiveCtr,
       manualCtrOverride: overrideCtr,
       derived: derivedOutcome,
-      screenshotUrl: screenshotUrl.trim() || undefined,
-      lessons: lessons.trim() || undefined,
+      screenshotUrl: screenshotUrl.trim() || null,
+      lessons: lessons.trim() || '',
       rating: Number(rating) || 5,
     };
 

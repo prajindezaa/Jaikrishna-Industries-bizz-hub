@@ -59,6 +59,35 @@ import {
   calculateCostPerOrder,
 } from '../lib/meta-ads-utils';
 
+/**
+ * Recursively cleans any object or array before passing to Firestore setDoc/updateDoc/batch
+ * Replaces any undefined values with null or omits them, preventing Firestore "Unsupported field value: undefined" errors.
+ */
+export function cleanFirestoreData<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => cleanFirestoreData(item)) as any;
+  }
+  if (typeof obj === 'object') {
+    // If it's a special object like Date, Timestamp, etc., keep it
+    if (obj instanceof Date || (obj as any)?._methodName || (obj as any)?.toMillis) {
+      return obj;
+    }
+    const cleaned: Record<string, any> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      if (val === undefined) {
+        cleaned[key] = '';
+      } else {
+        cleaned[key] = cleanFirestoreData(val);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+
 export interface SavedFilterPreset {
   id: string;
   name: string;
@@ -584,7 +613,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         summary,
         diff,
       };
-      await addDoc(collection(db, 'activity_logs'), logEntry);
+      await addDoc(collection(db, 'activity_logs'), cleanFirestoreData(logEntry));
     } catch (e) {
       console.warn('Failed to record activity log:', e);
     }
@@ -644,7 +673,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await setDoc(newDocRef, customerObj);
+    await setDoc(newDocRef, cleanFirestoreData(customerObj));
     await logActivity(
       'customer',
       newDocRef.id,
@@ -674,7 +703,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: now,
         updatedAt: now,
       };
-      await setDoc(taskRef, phoneTask);
+      await setDoc(taskRef, cleanFirestoreData(phoneTask));
     }
 
     return newDocRef.id;
@@ -752,7 +781,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       nextUpdates.stageHistory = [stageEntry, ...(existing.stageHistory || [])];
     }
 
-    await updateDoc(doc(db, 'customers', id), nextUpdates);
+    await updateDoc(doc(db, 'customers', id), cleanFirestoreData(nextUpdates));
     await logActivity('customer', id, 'update', `Updated customer ${existing?.companyName || id}`);
 
     // Trigger Rule 1 stage change automation
@@ -866,8 +895,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
-    await updateDoc(doc(db, 'customers', customerId), updates);
-    await addDoc(collection(db, 'customers', customerId, 'outreach_logs'), outreachEntry);
+    await updateDoc(doc(db, 'customers', customerId), cleanFirestoreData(updates));
+    await addDoc(collection(db, 'customers', customerId, 'outreach_logs'), cleanFirestoreData(outreachEntry));
     await logActivity('customer', customerId, 'update', `Logged ${log.channel} outcome (${log.outcome}) for ${customer.companyName}`);
 
     // Trigger Rule 1 automation if outreach caused a stage change
@@ -895,7 +924,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const existing = customers.find((c) => c.phone === normalized);
       if (existing) {
         // Update existing customer with new info
-        await updateDoc(doc(db, 'customers', existing.id), {
+        await updateDoc(doc(db, 'customers', existing.id), cleanFirestoreData({
           ...cust,
           phone: normalized,
           id: existing.id,
@@ -905,7 +934,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           lastWriteSource: 'bulk_import' as const,
           updatedBy: member?.email || user?.email || 'import',
           updatedAt: new Date().toISOString(),
-        });
+        }));
         updated++;
       } else {
         const docRef = doc(collection(db, 'customers'));
@@ -931,7 +960,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-        await setDoc(docRef, fullCust);
+        await setDoc(docRef, cleanFirestoreData(fullCust));
         imported++;
       }
     }
@@ -960,17 +989,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await setDoc(docRef, taskObj);
+    await setDoc(docRef, cleanFirestoreData(taskObj));
     await logActivity('task', docRef.id, 'create', `Created task: ${data.title} for ${data.date}`);
     return docRef.id;
   };
 
   const updateTask = async (id: string, updates: Partial<Task>): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
-    await updateDoc(doc(db, 'tasks', id), {
+    await updateDoc(doc(db, 'tasks', id), cleanFirestoreData({
       ...updates,
       updatedAt: new Date().toISOString(),
-    });
+    }));
     await logActivity('task', id, 'update', `Updated task ${id}`);
   };
 
@@ -1029,7 +1058,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createdAt: now,
         updatedAt: now,
       };
-      await setDoc(docRef, taskObj);
+      await setDoc(docRef, cleanFirestoreData(taskObj));
       count++;
     }
 
@@ -1135,8 +1164,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       // Execute transaction writes
-      transaction.set(orderRef, newOrder);
-      transaction.update(customerRef, customerUpdates);
+      transaction.set(orderRef, cleanFirestoreData(newOrder));
+      transaction.update(customerRef, cleanFirestoreData(customerUpdates));
     });
 
     await logActivity(
@@ -1160,10 +1189,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
     const now = new Date().toISOString();
-    await updateDoc(doc(db, 'orders', orderId), {
+    await updateDoc(doc(db, 'orders', orderId), cleanFirestoreData({
       dispatch: dispatchDetails,
       updatedAt: now,
-    });
+    }));
     await logActivity('order', orderId, 'update', `Updated dispatch details for Order ${orderId}`);
   };
 
@@ -1260,13 +1289,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const nextPaymentHistory = [paymentRecord, ...(order.paymentHistory || [])];
 
-    await updateDoc(doc(db, 'orders', orderId), {
+    await updateDoc(doc(db, 'orders', orderId), cleanFirestoreData({
       paidAmount: newPaid,
       outstandingAmount: newOutstanding,
       paymentStatus: newPaymentStatus,
       paymentHistory: nextPaymentHistory,
       updatedAt: now,
-    });
+    }));
 
     await logActivity(
       'order',
@@ -1300,7 +1329,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await setDoc(docRef, planObj);
+    await setDoc(docRef, cleanFirestoreData(planObj));
     await logActivity('plan', docRef.id, 'create', `Created ${plan.planType}: ${plan.title}`);
     return docRef.id;
   };
@@ -1339,7 +1368,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await setDoc(docRef, newAd);
+    await setDoc(docRef, cleanFirestoreData(newAd));
     await logActivity(
       'meta_ad',
       docRef.id,
@@ -1357,7 +1386,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...updates,
       updatedAt: now,
     };
-    await updateDoc(doc(db, 'meta_ads', id), nextUpdates);
+    await updateDoc(doc(db, 'meta_ads', id), cleanFirestoreData(nextUpdates));
     await logActivity('meta_ad', id, 'update', `Updated Meta Ad: "${existing?.name || id}"`);
   };
 
@@ -1403,7 +1432,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } as MetaAdResults;
     }
 
-    await updateDoc(doc(db, 'meta_ads', id), updates);
+    await updateDoc(doc(db, 'meta_ads', id), cleanFirestoreData(updates));
     await logActivity('meta_ad', id, 'status_change', `Ad "${ad.name}" moved from ${ad.stage} -> ${targetStage}`);
     return { success: true };
   };
@@ -1454,7 +1483,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updatedAt: now,
     };
 
-    await setDoc(docRef, clonedAd);
+    await setDoc(docRef, cleanFirestoreData(clonedAd));
     await logActivity('meta_ad', docRef.id, 'create', `Cloned ad "${source.name}" into new Pending ad`);
     return docRef.id;
   };
@@ -1600,7 +1629,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     const batch = writeBatch(firestore);
-    batch.set(docRef, pastAd);
+    batch.set(docRef, cleanFirestoreData(pastAd));
 
     if (linkedCustomerIds.length > 0) {
       linkedCustomerIds.forEach((cId) => {
@@ -1799,7 +1828,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           updatedAt: now,
         };
 
-        batch.set(docRef, pastAd);
+        batch.set(docRef, cleanFirestoreData(pastAd));
 
         if (item.linkedCustomerIds && item.linkedCustomerIds.length > 0) {
           item.linkedCustomerIds.forEach((cId) => {
@@ -1882,7 +1911,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: now,
       updatedAt: now,
     };
-    await setDoc(docRef, newEvent);
+    await setDoc(docRef, cleanFirestoreData(newEvent));
     await logActivity('festival_event', docRef.id, 'create', `Added festival: "${newEvent.name}" (${newEvent.date})`);
     return docRef.id;
   };
@@ -1890,10 +1919,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateFestivalEvent = async (id: string, updates: Partial<FestivalEvent>): Promise<void> => {
     if (!db) throw new Error('Firestore not initialized');
     const now = new Date().toISOString();
-    await updateDoc(doc(db, 'festival_events', id), {
+    await updateDoc(doc(db, 'festival_events', id), cleanFirestoreData({
       ...updates,
       updatedAt: now,
-    });
+    }));
     await logActivity('festival_event', id, 'update', `Updated festival event ${id}`);
   };
 

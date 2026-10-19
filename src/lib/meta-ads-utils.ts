@@ -352,22 +352,29 @@ export function parseIndianNumber(val: any): number | null {
 export function parseFlexibleDate(val: any): { dateISO: string | null; error?: string } {
   if (val === null || val === undefined) return { dateISO: null };
 
+  // Year sanity check helper: reject years outside 2000-2099
+  const isYearSane = (y: number) => y >= 2000 && y <= 2099;
+
   // If already a JavaScript Date object
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return { dateISO: null, error: 'Invalid Date object' };
+    const year = val.getFullYear();
+    if (!isYearSane(year)) {
+      return { dateISO: null, error: `Date year ${year} is outside the expected range (2000-2099). Likely an Excel serial number issue.` };
+    }
     return { dateISO: val.toISOString() };
   }
 
   // Handle Excel Serial Date Number (e.g. 45552 or "45552")
   // Excel epoch begins at 1899-12-30. Serial numbers around 45000-47000 correspond to years 2023-2028.
-  if (typeof val === 'number' || (/^\d{5}(?:\.\d+)?$/.test(String(val).trim()))) {
+  if (typeof val === 'number' || (/^\d{4,5}(?:\.\d+)?$/.test(String(val).trim()))) {
     const num = Number(val);
     if (!isNaN(num) && num > 20000 && num < 70000) {
-      // Excel 1900 leap year bug offset
+      // Excel serial date conversion: days since 1899-12-30 (with 1900 leap year bug)
       const excelEpochMs = new Date(Date.UTC(1899, 11, 30)).getTime();
       const dateMs = Math.round(excelEpochMs + num * 86400 * 1000);
       const d = new Date(dateMs);
-      if (!isNaN(d.getTime())) {
+      if (!isNaN(d.getTime()) && isYearSane(d.getUTCFullYear())) {
         return { dateISO: d.toISOString() };
       }
     }
@@ -376,7 +383,7 @@ export function parseFlexibleDate(val: any): { dateISO: string | null; error?: s
   const str = String(val).trim();
   if (!str) return { dateISO: null };
 
-  // 1. DD/MM/YYYY or DD-MM-YYYY
+  // 1. DD/MM/YYYY or DD-MM-YYYY (with optional time)
   const dmyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{1,2}))?$/);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1], 10);
@@ -385,6 +392,9 @@ export function parseFlexibleDate(val: any): { dateISO: string | null; error?: s
     const hours = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
     const mins = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
 
+    if (!isYearSane(year)) {
+      return { dateISO: null, error: `Year ${year} is outside expected range (2000-2099) in "${str}".` };
+    }
     if (month < 1 || month > 12 || day < 1 || day > 31) {
       return { dateISO: null, error: `Invalid date format: day ${day}, month ${month} in "${str}". Expected valid DD/MM/YYYY.` };
     }
@@ -395,7 +405,7 @@ export function parseFlexibleDate(val: any): { dateISO: string | null; error?: s
     return { dateISO: d.toISOString() };
   }
 
-  // 2. YYYY-MM-DD or YYYY/MM/DD
+  // 2. YYYY-MM-DD or YYYY/MM/DD (with optional time)
   const ymdMatch = str.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2}))?$/);
   if (ymdMatch) {
     const year = parseInt(ymdMatch[1], 10);
@@ -404,6 +414,9 @@ export function parseFlexibleDate(val: any): { dateISO: string | null; error?: s
     const hours = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
     const mins = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
 
+    if (!isYearSane(year)) {
+      return { dateISO: null, error: `Year ${year} is outside expected range (2000-2099) in "${str}".` };
+    }
     if (month < 1 || month > 12 || day < 1 || day > 31) {
       return { dateISO: null, error: `Invalid date format: day ${day}, month ${month} in "${str}". Expected valid YYYY-MM-DD.` };
     }
@@ -414,10 +427,14 @@ export function parseFlexibleDate(val: any): { dateISO: string | null; error?: s
     return { dateISO: d.toISOString() };
   }
 
-  // 3. Fallback standard Date.parse
+  // 3. Fallback standard Date.parse — but validate the result year
   const parsedMs = Date.parse(str);
   if (!isNaN(parsedMs)) {
-    return { dateISO: new Date(parsedMs).toISOString() };
+    const d = new Date(parsedMs);
+    if (isYearSane(d.getFullYear())) {
+      return { dateISO: d.toISOString() };
+    }
+    return { dateISO: null, error: `Parsed date year ${d.getFullYear()} is outside expected range (2000-2099) from "${str}".` };
   }
 
   return { dateISO: null, error: `Unrecognized date format: "${str}". Please use DD/MM/YYYY or YYYY-MM-DD.` };

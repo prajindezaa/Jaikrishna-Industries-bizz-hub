@@ -361,7 +361,7 @@ export const MetaAdPlanningModal: React.FC<MetaAdPlanningModalProps> = ({
         name: name.trim(),
         description: description.trim(),
         occasion: occasion.trim(),
-        festivalEventId: festivalEventId || undefined,
+        festivalEventId: festivalEventId || '',
         goal,
         stage: adToEdit ? adToEdit.stage : 'Pending',
         targetCustomers: {
