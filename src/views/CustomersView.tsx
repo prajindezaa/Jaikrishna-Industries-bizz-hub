@@ -114,6 +114,9 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   // Filter Presets Modal
   const [showSaveFilterModal, setShowSaveFilterModal] = useState(false);
   const [newFilterName, setNewFilterName] = useState('');
+  const [customerSort, setCustomerSort] = useState<
+    'action_priority' | 'name_asc' | 'revenue_desc' | 'orders_desc' | 'created_desc' | 'followup_soon'
+  >('action_priority');
 
   // Outreach Outcome Modal State
   const [outcomeTarget, setOutcomeTarget] = useState<{
@@ -508,25 +511,71 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
     setShowAddModal(true);
   };
 
-  const filteredCustomers = customers.filter((c) => {
-    const matchesSearch =
-      !search ||
-      c.companyName.toLowerCase().includes(search.toLowerCase()) ||
-      c.contactPerson.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search) ||
-      (c.place?.city && c.place.city.toLowerCase().includes(search.toLowerCase()));
+  const filteredCustomers = [...customers]
+    .filter((c) => {
+      const matchesSearch =
+        !search ||
+        c.companyName.toLowerCase().includes(search.toLowerCase()) ||
+        c.contactPerson.toLowerCase().includes(search.toLowerCase()) ||
+        c.phone.includes(search) ||
+        (c.place?.city && c.place.city.toLowerCase().includes(search.toLowerCase()));
 
-    const matchesStatus = selectedStatus === 'All' || c.status === selectedStatus;
-    const matchesCity = selectedCity === 'All' || c.place?.city === selectedCity;
-    const matchesStage = selectedStage === 'All' || c.leadStage === selectedStage;
+      const matchesStatus = selectedStatus === 'All' || c.status === selectedStatus;
+      const matchesCity = selectedCity === 'All' || c.place?.city === selectedCity;
+      const matchesStage = selectedStage === 'All' || c.leadStage === selectedStage;
 
-    // Group Filtering: 'all' shows all, 'ungrouped' shows customers with no groupId, otherwise matches c.groupId
-    const matchesGroup =
-      selectedGroupId === 'all' ||
-      (selectedGroupId === 'ungrouped' ? !c.groupId : c.groupId === selectedGroupId);
+      // Group Filtering: 'all' shows all, 'ungrouped' shows customers with no groupId, otherwise matches c.groupId
+      const matchesGroup =
+        selectedGroupId === 'all' ||
+        (selectedGroupId === 'ungrouped' ? !c.groupId : c.groupId === selectedGroupId);
 
-    return matchesSearch && matchesStatus && matchesCity && matchesStage && matchesGroup;
-  });
+      return matchesSearch && matchesStatus && matchesCity && matchesStage && matchesGroup;
+    })
+    .sort((a, b) => {
+      if (customerSort === 'name_asc') {
+        return a.companyName.localeCompare(b.companyName);
+      }
+      if (customerSort === 'revenue_desc') {
+        return (b.totalRevenue || 0) - (a.totalRevenue || 0);
+      }
+      if (customerSort === 'orders_desc') {
+        return (b.totalOrdersCount || 0) - (a.totalOrdersCount || 0);
+      }
+      if (customerSort === 'created_desc') {
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      }
+      if (customerSort === 'followup_soon') {
+        const fA = a.nextFollowUpDate || '9999-99-99';
+        const fB = b.nextFollowUpDate || '9999-99-99';
+        return fA.localeCompare(fB);
+      }
+
+      // Default: 'action_priority'
+      // 1. Leads actively needing outreach (New leads, Negotiation, Interested) appear first
+      const stageWeight: Record<string, number> = {
+        'New': 1,
+        'Negotiation': 2,
+        'Interested': 3,
+        'Sample sent': 4,
+        'Contacted': 5,
+        'Ordered': 6,
+        'Not interested': 7,
+      };
+      const swA = stageWeight[a.leadStage || 'New'] || 5;
+      const swB = stageWeight[b.leadStage || 'New'] || 5;
+      if (swA !== swB) return swA - swB;
+
+      // 2. Customers with upcoming/overdue follow-up dates first
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const isDueA = a.nextFollowUpDate && a.nextFollowUpDate <= todayStr;
+      const isDueB = b.nextFollowUpDate && b.nextFollowUpDate <= todayStr;
+      if (isDueA !== isDueB) return isDueA ? -1 : 1;
+
+      // 3. Most recently updated / created
+      const dateA = a.updatedAt || a.createdAt || '';
+      const dateB = b.updatedAt || b.createdAt || '';
+      return dateB.localeCompare(dateA);
+    });
 
   return (
     <div className="space-y-6">
@@ -802,6 +851,23 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
               <option value="Negotiation">Negotiation</option>
               <option value="Ordered">Ordered</option>
               <option value="Not interested">Not interested</option>
+            </select>
+          </div>
+
+          {/* Customer Sort Dropdown */}
+          <div className="flex items-center gap-1 bg-stone-50 px-2 py-1.5 rounded-lg border border-stone-200">
+            <span className="text-[11px] font-medium text-stone-500">Sort:</span>
+            <select
+              value={customerSort}
+              onChange={(e) => setCustomerSort(e.target.value as any)}
+              className="bg-transparent font-medium text-stone-700 focus:outline-hidden text-xs"
+            >
+              <option value="action_priority">⚡ Action Priority (New &amp; Hot Leads First)</option>
+              <option value="followup_soon">⏰ Follow-Up Due Soonest</option>
+              <option value="revenue_desc">💰 Highest Revenue First</option>
+              <option value="orders_desc">📦 Most Orders First</option>
+              <option value="created_desc">🆕 Newest Added First</option>
+              <option value="name_asc">🔤 Name (A to Z)</option>
             </select>
           </div>
 

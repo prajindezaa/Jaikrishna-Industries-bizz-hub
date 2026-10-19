@@ -43,6 +43,7 @@ export const OrdersView: React.FC = () => {
   const [selectedDeliveryStatus, setSelectedDeliveryStatus] = useState<string>('All');
   const [selectedCity, setSelectedCity] = useState<string>('All');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
+  const [orderSort, setOrderSort] = useState<'action_required' | 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc'>('action_required');
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -176,22 +177,62 @@ export const OrdersView: React.FC = () => {
 
   const activeGroups = customerGroups.filter((g) => g.isActive && !g.isDeleted);
 
-  const filteredOrders = orders.filter((o) => {
-    const matchesSearch =
-      o.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(search.toLowerCase()) ||
-      (o.invoiceNumber && o.invoiceNumber.toLowerCase().includes(search.toLowerCase())) ||
-      (o.customerCity && o.customerCity.toLowerCase().includes(search.toLowerCase()));
+  const filteredOrders = [...orders]
+    .filter((o) => {
+      const matchesSearch =
+        o.orderNumber.toLowerCase().includes(search.toLowerCase()) ||
+        o.customerName.toLowerCase().includes(search.toLowerCase()) ||
+        (o.invoiceNumber && o.invoiceNumber.toLowerCase().includes(search.toLowerCase())) ||
+        (o.customerCity && o.customerCity.toLowerCase().includes(search.toLowerCase()));
 
-    const matchesPayment = selectedPaymentStatus === 'All' || o.paymentStatus === selectedPaymentStatus;
-    const matchesDelivery = selectedDeliveryStatus === 'All' || o.deliveryStatus === selectedDeliveryStatus;
-    const matchesCity = selectedCity === 'All' || o.customerCity === selectedCity;
-    const matchesGroup =
-      selectedGroup === 'All' ||
-      (selectedGroup === 'unknown' ? !o.customerGroupId : o.customerGroupId === selectedGroup);
+      const matchesPayment = selectedPaymentStatus === 'All' || o.paymentStatus === selectedPaymentStatus;
+      const matchesDelivery = selectedDeliveryStatus === 'All' || o.deliveryStatus === selectedDeliveryStatus;
+      const matchesCity = selectedCity === 'All' || o.customerCity === selectedCity;
+      const matchesGroup =
+        selectedGroup === 'All' ||
+        (selectedGroup === 'unknown' ? !o.customerGroupId : o.customerGroupId === selectedGroup);
 
-    return matchesSearch && matchesPayment && matchesDelivery && matchesCity && matchesGroup && !o.isDeleted;
-  });
+      return matchesSearch && matchesPayment && matchesDelivery && matchesCity && matchesGroup && !o.isDeleted;
+    })
+    .sort((a, b) => {
+      if (orderSort === 'date_desc') {
+        const dA = a.invoiceDate || a.orderDate || '';
+        const dB = b.invoiceDate || b.orderDate || '';
+        return dB.localeCompare(dA);
+      }
+      if (orderSort === 'date_asc') {
+        const dA = a.invoiceDate || a.orderDate || '';
+        const dB = b.invoiceDate || b.orderDate || '';
+        return dA.localeCompare(dB);
+      }
+      if (orderSort === 'amount_desc') {
+        return (b.totalAmount || 0) - (a.totalAmount || 0);
+      }
+      if (orderSort === 'amount_asc') {
+        return (a.totalAmount || 0) - (b.totalAmount || 0);
+      }
+
+      // Default: 'action_required'
+      // 1. Pending/Packed dispatch needs operational attention first
+      const isDispatchPendingA = a.deliveryStatus === 'Pending' || a.deliveryStatus === 'Packed';
+      const isDispatchPendingB = b.deliveryStatus === 'Pending' || b.deliveryStatus === 'Packed';
+      if (isDispatchPendingA !== isDispatchPendingB) return isDispatchPendingA ? -1 : 1;
+
+      // 2. Unsettled/Overdue payment needs collection attention next
+      const isPaymentUnsettledA = a.paymentStatus !== 'Paid';
+      const isPaymentUnsettledB = b.paymentStatus !== 'Paid';
+      if (isPaymentUnsettledA !== isPaymentUnsettledB) return isPaymentUnsettledA ? -1 : 1;
+
+      // 3. Outstanding amount descending
+      const outA = a.outstandingAmount || (a.paymentStatus !== 'Paid' ? a.totalAmount : 0);
+      const outB = b.outstandingAmount || (b.paymentStatus !== 'Paid' ? b.totalAmount : 0);
+      if (outA !== outB) return outB - outA;
+
+      // 4. Most recent date
+      const dA = a.invoiceDate || a.orderDate || '';
+      const dB = b.invoiceDate || b.orderDate || '';
+      return dB.localeCompare(dA);
+    });
 
   const totalRevenue = orders.reduce((acc, o) => acc + (o.paymentStatus === 'Paid' ? o.totalAmount : (o.paidAmount || 0)), 0);
   const pendingRevenue = orders.reduce((acc, o) => acc + (o.outstandingAmount || (o.paymentStatus !== 'Paid' ? o.totalAmount : 0)), 0);
@@ -392,6 +433,22 @@ export const OrdersView: React.FC = () => {
               </select>
             </div>
           )}
+
+          {/* Sort By Dropdown */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-medium text-stone-500">Sort:</span>
+            <select
+              value={orderSort}
+              onChange={(e) => setOrderSort(e.target.value as any)}
+              className="bg-stone-50 border border-stone-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-stone-700 focus:outline-hidden"
+            >
+              <option value="action_required">⚡ Action Required (Unsettled / Dispatch First)</option>
+              <option value="date_desc">📅 Date: Newest First</option>
+              <option value="date_asc">📅 Date: Oldest First</option>
+              <option value="amount_desc">💰 Bill Value: High to Low</option>
+              <option value="amount_asc">💰 Bill Value: Low to High</option>
+            </select>
+          </div>
         </div>
       </div>
 

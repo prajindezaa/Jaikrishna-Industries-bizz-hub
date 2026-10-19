@@ -141,29 +141,61 @@ export const TasksView: React.FC = () => {
   };
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      const matchesStatus = selectedStatus === 'All' || t.status === selectedStatus;
-      const matchesAssignee = selectedAssignee === 'All' || t.assignedTo === selectedAssignee;
+    const priorityWeight: Record<TaskPriority, number> = {
+      Urgent: 1,
+      High: 2,
+      Medium: 3,
+      Low: 4,
+    };
 
-      if (viewMode === 'daily') {
-        return matchesStatus && matchesAssignee && t.date === activeDate;
-      }
+    const statusWeight: Record<TaskStatus, number> = {
+      'In progress': 1,
+      'Pending': 2,
+      'Missed': 3,
+      'Done': 4,
+    };
 
-      if (viewMode === 'weekly') {
-        const curr = new Date(activeDate);
-        const day = curr.getDay();
-        const diff = curr.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(curr.setDate(diff));
-        const sunday = new Date(monday);
-        sunday.setDate(sunday.getDate() + 6);
+    return [...tasks]
+      .filter((t) => {
+        const matchesStatus = selectedStatus === 'All' || t.status === selectedStatus;
+        const matchesAssignee = selectedAssignee === 'All' || t.assignedTo === selectedAssignee;
 
-        const mStr = monday.toISOString().slice(0, 10);
-        const sStr = sunday.toISOString().slice(0, 10);
-        return matchesStatus && matchesAssignee && t.date >= mStr && t.date <= sStr;
-      }
+        if (viewMode === 'daily') {
+          return matchesStatus && matchesAssignee && t.date === activeDate;
+        }
 
-      return matchesStatus && matchesAssignee;
-    });
+        if (viewMode === 'weekly') {
+          const curr = new Date(activeDate);
+          const day = curr.getDay();
+          const diff = curr.getDate() - day + (day === 0 ? -6 : 1);
+          const monday = new Date(curr.setDate(diff));
+          const sunday = new Date(monday);
+          sunday.setDate(sunday.getDate() + 6);
+
+          const mStr = monday.toISOString().slice(0, 10);
+          const sStr = sunday.toISOString().slice(0, 10);
+          return matchesStatus && matchesAssignee && t.date >= mStr && t.date <= sStr;
+        }
+
+        return matchesStatus && matchesAssignee;
+      })
+      .sort((a, b) => {
+        // 1. Unfinished tasks first, Done tasks next
+        const swA = statusWeight[a.status] || 2;
+        const swB = statusWeight[b.status] || 2;
+        if (swA !== swB) return swA - swB;
+
+        // 2. Urgent & High priority first
+        const pwA = priorityWeight[a.priority] || 3;
+        const pwB = priorityWeight[b.priority] || 3;
+        if (pwA !== pwB) return pwA - pwB;
+
+        // 3. Date ascending (closer due date first)
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+
+        // 4. Start time ascending
+        return (a.startTime || '').localeCompare(b.startTime || '');
+      });
   }, [tasks, selectedStatus, selectedAssignee, viewMode, activeDate]);
 
   // Navigate active date

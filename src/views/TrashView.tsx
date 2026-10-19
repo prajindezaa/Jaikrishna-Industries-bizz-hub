@@ -60,14 +60,22 @@ export const TrashView: React.FC = () => {
     }
   };
 
-  const filteredItems = trashItems.filter((item) => {
-    const matchesEntity = filterEntity === 'all' || item.entity === filterEntity;
-    const matchesSearch =
-      !search ||
-      item.title.toLowerCase().includes(search.toLowerCase()) ||
-      item.details.toLowerCase().includes(search.toLowerCase());
-    return matchesEntity && matchesSearch;
-  });
+  const filteredItems = [...trashItems]
+    .filter((item) => {
+      const matchesEntity = filterEntity === 'all' || item.entity === filterEntity;
+      const matchesSearch =
+        !search ||
+        item.title.toLowerCase().includes(search.toLowerCase()) ||
+        item.details.toLowerCase().includes(search.toLowerCase());
+      return matchesEntity && matchesSearch;
+    })
+    .sort((a, b) => {
+      // Urgent: Items closest to expiry (fewer days remaining) appear first so users can review before auto-purge
+      if (a.daysRemaining !== b.daysRemaining) {
+        return a.daysRemaining - b.daysRemaining;
+      }
+      return (b.deletedAt || '').localeCompare(a.deletedAt || '');
+    });
 
   return (
     <div className="space-y-6">

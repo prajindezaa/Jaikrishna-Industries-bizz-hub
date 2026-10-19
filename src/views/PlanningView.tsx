@@ -295,28 +295,30 @@ Jaikrishna Industries, Salem`;
           </div>
 
           <div className="space-y-3 text-xs">
-            {dailyGoals.map((goal) => (
-              <label
-                key={goal.id}
-                className={`flex items-center gap-3 p-3.5 rounded-xl border transition-colors cursor-pointer select-none ${
-                  goal.done
-                    ? 'bg-stone-50/60 border-stone-200 text-stone-400'
-                    : 'bg-white border-stone-200 hover:bg-stone-50 text-stone-900 font-semibold'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={goal.done}
-                  onChange={() =>
-                    setDailyGoals(
-                      dailyGoals.map((g) => (g.id === goal.id ? { ...g, done: !g.done } : g))
-                    )
-                  }
-                  className="rounded border-stone-300 text-amber-800 focus:ring-amber-500 w-4 h-4"
-                />
-                <span className={goal.done ? 'line-through' : ''}>{goal.text}</span>
-              </label>
-            ))}
+            {[...dailyGoals]
+              .sort((a, b) => (a.done === b.done ? a.id - b.id : a.done ? 1 : -1))
+              .map((goal) => (
+                <label
+                  key={goal.id}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl border transition-colors cursor-pointer select-none ${
+                    goal.done
+                      ? 'bg-stone-50/60 border-stone-200 text-stone-400'
+                      : 'bg-white border-stone-200 hover:bg-stone-50 text-stone-900 font-semibold'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={goal.done}
+                    onChange={() =>
+                      setDailyGoals(
+                        dailyGoals.map((g) => (g.id === goal.id ? { ...g, done: !g.done } : g))
+                      )
+                    }
+                    className="rounded border-stone-300 text-amber-800 focus:ring-amber-500 w-4 h-4"
+                  />
+                  <span className={goal.done ? 'line-through' : ''}>{goal.text}</span>
+                </label>
+              ))}
           </div>
         </div>
       )}

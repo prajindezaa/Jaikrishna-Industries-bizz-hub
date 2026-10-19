@@ -52,23 +52,43 @@ export const MetaAdsTableView: React.FC<MetaAdsTableViewProps> = ({
   const [includeDrafts, setIncludeDrafts] = useState(true);
 
   const filteredAds = useMemo(() => {
-    return ads.filter((ad) => {
-      if (ad.isDeleted) return false;
-      if (!includeDrafts && ad.isDraft) return false;
-      if (pastAdsOnly && !ad.isHistorical) return false;
-      if (selectedStage !== 'All' && ad.stage !== selectedStage) return false;
-      if (selectedGoal !== 'All' && ad.goal !== selectedGoal) return false;
+    const stagePriority: Record<MetaAdStage, number> = {
+      'Waiting for result': 1,
+      'Published': 2,
+      'Pending': 3,
+      'Fulfilled': 4,
+      'Cancelled': 5,
+    };
 
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const matchName = ad.name.toLowerCase().includes(q);
-        const matchOccasion = (ad.occasion || '').toLowerCase().includes(q);
-        const matchGoal = ad.goal.toLowerCase().includes(q);
-        const matchPlace = (ad.targetCustomers?.places || []).some((p) => p.toLowerCase().includes(q));
-        if (!matchName && !matchOccasion && !matchGoal && !matchPlace) return false;
-      }
-      return true;
-    });
+    return [...ads]
+      .filter((ad) => {
+        if (ad.isDeleted) return false;
+        if (!includeDrafts && ad.isDraft) return false;
+        if (pastAdsOnly && !ad.isHistorical) return false;
+        if (selectedStage !== 'All' && ad.stage !== selectedStage) return false;
+        if (selectedGoal !== 'All' && ad.goal !== selectedGoal) return false;
+
+        if (search.trim()) {
+          const q = search.toLowerCase();
+          const matchName = ad.name.toLowerCase().includes(q);
+          const matchOccasion = (ad.occasion || '').toLowerCase().includes(q);
+          const matchGoal = ad.goal.toLowerCase().includes(q);
+          const matchPlace = (ad.targetCustomers?.places || []).some((p) => p.toLowerCase().includes(q));
+          if (!matchName && !matchOccasion && !matchGoal && !matchPlace) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        // 1. Stage action priority (Waiting for result, then Published, Pending, Fulfilled)
+        const spA = stagePriority[a.stage] || 3;
+        const spB = stagePriority[b.stage] || 3;
+        if (spA !== spB) return spA - spB;
+
+        // 2. Most recent start or end date
+        const dA = a.plannedStart || a.createdAt || '';
+        const dB = b.plannedStart || b.createdAt || '';
+        return dB.localeCompare(dA);
+      });
   }, [ads, search, selectedStage, selectedGoal, pastAdsOnly, includeDrafts]);
 
   const exportTableToExcel = () => {
