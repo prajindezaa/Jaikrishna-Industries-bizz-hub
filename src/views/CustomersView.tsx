@@ -173,11 +173,16 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   const handleBulkTrash = async () => {
     if (selectedIds.size === 0) return;
     if (window.confirm(`Move ${selectedIds.size} selected customer(s) to 30-day Trash?`)) {
-      for (const id of Array.from(selectedIds)) {
-        await softDeleteCustomer(id);
+      try {
+        for (const id of Array.from(selectedIds)) {
+          await softDeleteCustomer(id);
+        }
+        setSelectedIds(new Set());
+        showToast(`Moved ${selectedIds.size} customer(s) to 30-day Trash.`);
+      } catch (err: any) {
+        console.error('Error moving customers to trash:', err);
+        alert(err?.message || 'Failed to move customers to trash.');
       }
-      setSelectedIds(new Set());
-      showToast(`Moved ${selectedIds.size} customer(s) to 30-day Trash.`);
     }
   };
 
@@ -694,10 +699,15 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
 
                           {/* Soft Delete */}
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (window.confirm(`Move "${cust.companyName}" to 30-day trash?`)) {
-                                softDeleteCustomer(cust.id);
-                                showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                                try {
+                                  await softDeleteCustomer(cust.id);
+                                  showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                                } catch (err: any) {
+                                  console.error('Failed to move customer to trash:', err);
+                                  alert(err?.message || 'Failed to move customer to trash.');
+                                }
                               }
                             }}
                             className="p-1.5 rounded-lg bg-stone-50 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200 transition-colors"
@@ -786,10 +796,15 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                             <Edit3 className="w-3 h-3" />
                           </button>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               if (window.confirm(`Move "${cust.companyName}" to 30-day trash?`)) {
-                                softDeleteCustomer(cust.id);
-                                showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                                try {
+                                  await softDeleteCustomer(cust.id);
+                                  showToast(`Moved ${cust.companyName} to 30-day trash.`);
+                                } catch (err: any) {
+                                  console.error('Failed to move customer to trash:', err);
+                                  alert(err?.message || 'Failed to move customer to trash.');
+                                }
                               }
                             }}
                             className="p-1 rounded-md bg-stone-50 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200"
@@ -1010,9 +1025,14 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
           showToast(`Updated ${updated.companyName}`);
         }}
         onDeleteCustomer={async (id) => {
-          await softDeleteCustomer(id);
-          setActiveCustomer(null);
-          showToast('Moved to 30-day trash.');
+          try {
+            await softDeleteCustomer(id);
+            setActiveCustomer(null);
+            showToast('Moved to 30-day trash.');
+          } catch (err: any) {
+            console.error('Failed to move customer to trash:', err);
+            alert(err?.message || 'Failed to move customer to trash.');
+          }
         }}
         onLogOutcome={(channel) => {
           if (activeCustomer) {
@@ -1035,6 +1055,13 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
             setActiveCustomer({ ...activeCustomer, ...updates });
           }
           showToast(`Customer details updated successfully.`);
+        }}
+        onDelete={async (customerId) => {
+          await softDeleteCustomer(customerId);
+          if (activeCustomer && activeCustomer.id === customerId) {
+            setActiveCustomer(null);
+          }
+          showToast('Moved to 30-day trash.');
         }}
       />
 

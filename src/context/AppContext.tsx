@@ -794,13 +794,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!db) throw new Error('Firestore not initialized');
     const existing = customers.find((c) => c.id === id);
     const now = new Date().toISOString();
+    const userEmail = member?.email || user?.email || 'admin';
 
-    await updateDoc(doc(db, 'customers', id), {
-      isDeleted: true,
-      deletedAt: now,
-      deletedBy: member?.email || user?.email || 'admin',
-      updatedAt: now,
-    });
+    await updateDoc(
+      doc(db, 'customers', id),
+      cleanFirestoreData({
+        isDeleted: true,
+        deletedAt: now,
+        deletedBy: userEmail,
+        updatedAt: now,
+        updatedBy: userEmail,
+        lastWriteSource: 'manual_edit',
+      })
+    );
 
     await logActivity('customer', id, 'soft_delete', `Moved customer to 30-day trash: ${existing?.companyName || id}`);
   };
@@ -2021,11 +2027,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : item.entity === 'order'
         ? 'orders'
         : 'meta_ads';
-    await updateDoc(doc(db, colName, item.id), {
+    const userEmail = member?.email || user?.email || 'admin';
+    const updates: Record<string, any> = {
       isDeleted: false,
       deletedAt: null,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    if (item.entity === 'customer') {
+      updates.updatedBy = userEmail;
+      updates.lastWriteSource = 'manual_edit';
+    }
+    await updateDoc(doc(db, colName, item.id), cleanFirestoreData(updates));
     await logActivity(item.entity, item.id, 'restore', `Restored ${item.title} from trash`);
   };
 
