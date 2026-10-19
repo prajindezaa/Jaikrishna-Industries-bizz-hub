@@ -31,10 +31,12 @@ import {
 import { Task, TaskType, TaskPriority, TaskStatus, TaskRepeat } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { formatPhoneDisplay, getTelLink, getWhatsAppLink } from '../lib/phone';
 
 export const TasksView: React.FC = () => {
   const { t } = useLanguage();
+  const { member } = useAuth();
   const {
     tasks,
     customers,
@@ -65,7 +67,7 @@ export const TasksView: React.FC = () => {
   const [description, setDescription] = useState('');
   const [taskType, setTaskType] = useState<TaskType>('Call');
   const [priority, setPriority] = useState<TaskPriority>('Medium');
-  const [assignedTo, setAssignedTo] = useState('prajindezaa142@gmail.com');
+  const [assignedTo, setAssignedTo] = useState(member?.email || 'prajindezaa142@gmail.com');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [startTime, setStartTime] = useState('10:00');

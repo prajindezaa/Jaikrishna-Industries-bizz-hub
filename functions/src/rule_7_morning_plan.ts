@@ -75,7 +75,9 @@ export async function executeRule7MorningPlan(
         lookaheadFestivalDays: 7,
         allowEmptyNotification: false,
         memberSettings: {
-          'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+          'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
+          'jaikrishnaindustries1@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
+          'srinisrkp@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
         },
       },
       updatedBy: 'system',
@@ -96,19 +98,32 @@ export async function executeRule7MorningPlan(
 
   // 2. Fetch team members: check team_members first, then allowed_emails, then fallback
   const teamSnap = await db.collection('team_members').get();
-  let members = teamSnap.docs.map((d) => d.data().email || d.id).filter(Boolean);
+  let members = teamSnap.docs.map((d) => (d.data().email || d.id || '').toLowerCase().trim()).filter(Boolean);
 
   if (members.length === 0) {
     const allowedSnap = await db.collection('allowed_emails').get();
-    members = allowedSnap.docs.map((d) => d.id).filter(Boolean);
+    members = allowedSnap.docs.map((d) => d.id.toLowerCase().trim()).filter(Boolean);
   }
 
   if (members.length === 0) {
-    members = ['prajindezaa142@gmail.com'];
+    members = [
+      'prajindezaa142@gmail.com',
+      'jaikrishnaindustries1@gmail.com',
+      'srinisrkp@gmail.com',
+    ];
   }
-  result.evaluated = members.length;
 
-  for (const email of members) {
+  // Deduplicate and canonicalize
+  const uniqueMembers = Array.from(new Set(members)).filter(
+    (e) => e !== 'prajindezaa142@gamil.com'
+  );
+  if (!uniqueMembers.includes('prajindezaa142@gmail.com')) {
+    uniqueMembers.unshift('prajindezaa142@gmail.com');
+  }
+
+  result.evaluated = uniqueMembers.length;
+
+  for (const email of uniqueMembers) {
     const memberCfg = memberConfigs[email] || {
       enabled: true,
       deliveryTime: '08:00',

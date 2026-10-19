@@ -12,12 +12,18 @@ service cloud.firestore {
     }
 
     function isInitialAdmin() {
-      return isAuthenticated() && currentUserEmail() == 'prajindezaa142@gmail.com';
+      return isAuthenticated() && (
+        currentUserEmail() == 'prajindezaa142@gmail.com' ||
+        currentUserEmail() == 'prajindezaa142@gamil.com'
+      );
     }
 
     function isAllowedMember() {
       return isAuthenticated() && (
         currentUserEmail() == 'prajindezaa142@gmail.com' ||
+        currentUserEmail() == 'prajindezaa142@gamil.com' ||
+        currentUserEmail() == 'jaikrishnaindustries1@gmail.com' ||
+        currentUserEmail() == 'srinisrkp@gmail.com' ||
         exists(/databases/$(database)/documents/allowed_emails/$(currentUserEmail()))
       );
     }

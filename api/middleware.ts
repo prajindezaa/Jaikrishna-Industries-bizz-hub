@@ -6,8 +6,14 @@
 import { Request, Response, NextFunction } from 'express';
 import admin from 'firebase-admin';
 
-// Strict initial admin email
+// Strict initial admin and team allowlist
 export const INITIAL_ADMIN_EMAIL = 'prajindezaa142@gmail.com';
+export const INITIAL_ALLOWED_EMAILS = [
+  'prajindezaa142@gmail.com',
+  'prajindezaa142@gamil.com',
+  'jaikrishnaindustries1@gmail.com',
+  'srinisrkp@gmail.com',
+];
 
 /**
  * Normalizes Firebase Private Key to correctly handle Vercel line breaks (\n) and quotes
@@ -182,7 +188,7 @@ export async function requireAuth(
     }
 
     // Verify 3-member allowlist membership
-    let isAllowed = email === INITIAL_ADMIN_EMAIL.toLowerCase();
+    let isAllowed = INITIAL_ALLOWED_EMAILS.includes(email);
 
     if (!isAllowed) {
       try {

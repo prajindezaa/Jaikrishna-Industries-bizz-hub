@@ -22,9 +22,11 @@ import {
 import { Order, OrderItem, Product } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp, POOJA_PRODUCTS } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 
 export const OrdersView: React.FC = () => {
   const { t } = useLanguage();
+  const { member } = useAuth();
   const { orders, loadingOrders, customers, createOrderTransaction, softDeleteOrder } = useApp();
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -78,7 +80,7 @@ export const OrdersView: React.FC = () => {
         deliveryStatus,
         orderDate: new Date().toISOString().slice(0, 10),
         notes: orderNotes.trim(),
-        recordedBy: 'prajindezaa142@gmail.com',
+        recordedBy: member?.email || 'prajindezaa142@gmail.com',
       });
 
       setShowAddModal(false);

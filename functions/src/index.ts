@@ -87,16 +87,23 @@ export const checkRemindersScheduled = onSchedule(
           updatedAt: FieldValue.serverTimestamp(),
         });
 
-        // Log peer alert notification for other members
-        await db.collection('notifications').add({
-          recipientEmail: 'prajindezaa142@gmail.com',
-          title: `Task Missed: ${task.title}`,
-          body: `Scheduled for ${task.customerName || 'factory'} at ${task.startTime}-${task.endTime} was not completed.`,
-          type: 'missed',
-          deepLink: `/tasks?id=${taskId}`,
-          isRead: false,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+        // Log peer alert notification for all team members
+        const teamEmails = [
+          'prajindezaa142@gmail.com',
+          'jaikrishnaindustries1@gmail.com',
+          'srinisrkp@gmail.com',
+        ];
+        for (const recipientEmail of teamEmails) {
+          await db.collection('notifications').add({
+            recipientEmail,
+            title: `Task Missed: ${task.title}`,
+            body: `Scheduled for ${task.customerName || 'factory'} at ${task.startTime}-${task.endTime} was not completed.`,
+            type: 'missed',
+            deepLink: `/tasks?id=${taskId}`,
+            isRead: false,
+            createdAt: FieldValue.serverTimestamp(),
+          });
+        }
       }
 
       // Group pending tasks for batched digest
@@ -253,7 +260,11 @@ export const sendDailySummaryScheduled = onSchedule(
     `;
 
     // Send summary to allowlisted members
-    const allowedMembers = ['prajindezaa142@gmail.com'];
+    const allowedMembers = [
+      'prajindezaa142@gmail.com',
+      'jaikrishnaindustries1@gmail.com',
+      'srinisrkp@gmail.com',
+    ];
     for (const email of allowedMembers) {
       await sendResendEmail(email, `Jaikrishna Daily Summary — ${todayStr}`, summaryHtml);
     }

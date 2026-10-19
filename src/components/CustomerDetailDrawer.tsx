@@ -23,6 +23,7 @@ import {
 import { Customer, CustomerStatus, LeadStage } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { formatPhoneDisplay, getTelLink, getWhatsAppLink } from '../lib/phone';
+import { useAuth } from '../context/AuthContext';
 
 interface CustomerDetailDrawerProps {
   customer: Customer | null;
@@ -40,6 +41,7 @@ export const CustomerDetailDrawer: React.FC<CustomerDetailDrawerProps> = ({
   onLogOutcome,
 }) => {
   const { t } = useLanguage();
+  const { member } = useAuth();
   const [activeTab, setActiveTab] = useState<'timeline' | 'details'>('timeline');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -55,7 +57,7 @@ export const CustomerDetailDrawer: React.FC<CustomerDetailDrawerProps> = ({
         {
           from: customer.status,
           to: nextStatus,
-          changedBy: 'prajindezaa142@gmail.com',
+          changedBy: member?.email || 'prajindezaa142@gmail.com',
           changedAt: new Date().toISOString(),
           reason: 'Manual status transition from customer detail panel',
         },

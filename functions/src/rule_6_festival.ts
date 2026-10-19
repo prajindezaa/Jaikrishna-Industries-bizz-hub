@@ -99,6 +99,18 @@ export async function executeRule6FestivalCampaignPrep(
 
   const rollingRunRef = db.collection('automation_runs').doc(`rule_6_festival_${todayStr}`);
 
+  // Fetch team members for round-robin assignment
+  const allowedSnap = await db.collection('allowed_emails').get();
+  const teamMembers = allowedSnap.docs
+    .map((d) => d.id.toLowerCase().trim())
+    .filter((e) => Boolean(e) && e !== 'prajindezaa142@gamil.com');
+  const teamList = teamMembers.length > 0 ? teamMembers : [
+    'prajindezaa142@gmail.com',
+    'jaikrishnaindustries1@gmail.com',
+    'srinisrkp@gmail.com',
+  ];
+  let memberIdx = ruleData.roundRobinIndex || 0;
+
   for (const festDoc of candidateFestivals) {
     const fest = festDoc.data();
     const eventId = festDoc.id;
@@ -167,7 +179,7 @@ export async function executeRule6FestivalCampaignPrep(
           eventId,
           eventName,
           eventDate,
-          assignedTo: 'prajindezaa142@gmail.com',
+          assignedTo: teamList[memberIdx % teamList.length],
           queuedAt: new Date().toISOString(),
           attemptedDate: todayStr,
           status: 'queued',
@@ -192,7 +204,7 @@ export async function executeRule6FestivalCampaignPrep(
           title,
           description: `Created automatically by Rule 6 (Festival Campaign Prep). Festival "${eventName}" is scheduled for ${eventDate}. Review seasonal agarbatti demand, wholesale packaging inventory, and social/Meta ad materials.`,
           type: 'Other',
-          assignedTo: 'prajindezaa142@gmail.com',
+          assignedTo: teamList[memberIdx % teamList.length],
           priority: 'High',
           date: dueDateStr,
           startTime: '10:00',
@@ -240,6 +252,7 @@ export async function executeRule6FestivalCampaignPrep(
     }
 
     stats.created++;
+    memberIdx++;
   }
 
   if (!dryRun) {

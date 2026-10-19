@@ -23,9 +23,9 @@ async function seed() {
 
   // 1. Seed 3 TEST members (Equal privileges, allowlisted)
   const members = [
-    { email: 'prajindezaa142@gmail.com', name: 'TEST Member 1 (Admin)', role: 'Managing Director' },
-    { email: 'salesmanager@jaikrishnaindustries.com', name: 'TEST Member 2 (Sales)', role: 'Sales Lead' },
-    { email: 'operations@jaikrishnaindustries.com', name: 'TEST Member 3 (Ops)', role: 'Operations Lead' },
+    { email: 'prajindezaa142@gmail.com', name: 'Prajin (Admin)', role: 'Admin' },
+    { email: 'jaikrishnaindustries1@gmail.com', name: 'Sales Manager', role: 'Sales Manager' },
+    { email: 'srinisrkp@gmail.com', name: 'Srini (Owner)', role: 'Owner' },
   ];
 
   for (const m of members) {
@@ -93,9 +93,9 @@ async function seed() {
     parameters: {
       maxLatenessMinutes: 120,
       memberSettings: {
-        'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:30', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
-        'salesmanager@jaikrishnaindustries.com': { enabled: true, deliveryTime: '09:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
-        'operations@jaikrishnaindustries.com': { enabled: true, deliveryTime: '08:30', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+        'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+        'jaikrishnaindustries1@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+        'srinisrkp@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
       },
     },
     updatedAt: new Date().toISOString(),
@@ -130,10 +130,10 @@ async function seed() {
       leadStage: 'New',
       status: 'New customer',
       place: { city: 'Coimbatore', district: 'Coimbatore', state: 'Tamil Nadu' },
-      assignedTo: 'salesmanager@jaikrishnaindustries.com',
+      assignedTo: 'jaikrishnaindustries1@gmail.com',
       lastWriteSource: 'manual_create',
-      updatedBy: 'salesmanager@jaikrishnaindustries.com',
-      stageHistory: [{ from: 'New', to: 'New', changedBy: 'salesmanager@jaikrishnaindustries.com', changedAt: now }],
+      updatedBy: 'jaikrishnaindustries1@gmail.com',
+      stageHistory: [{ from: 'New', to: 'New', changedBy: 'jaikrishnaindustries1@gmail.com', changedAt: now }],
       isDeleted: false,
       createdAt: now,
       updatedAt: now,
@@ -147,10 +147,10 @@ async function seed() {
       leadStage: 'Interested',
       status: 'New customer',
       place: { city: 'Tirupur', district: 'Tirupur', state: 'Tamil Nadu' },
-      assignedTo: 'operations@jaikrishnaindustries.com',
+      assignedTo: 'srinisrkp@gmail.com',
       lastWriteSource: 'manual_create',
-      updatedBy: 'operations@jaikrishnaindustries.com',
-      stageHistory: [{ from: 'Interested', to: 'Interested', changedBy: 'operations@jaikrishnaindustries.com', changedAt: now }],
+      updatedBy: 'srinisrkp@gmail.com',
+      stageHistory: [{ from: 'Interested', to: 'Interested', changedBy: 'srinisrkp@gmail.com', changedAt: now }],
       isDeleted: false,
       createdAt: now,
       updatedAt: now,

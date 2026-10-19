@@ -8,6 +8,7 @@ import { Phone, MessageSquare, X, Check, Calendar, Clock } from 'lucide-react';
 import { Customer, OutreachLog } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { formatPhoneDisplay } from '../lib/phone';
+import { useAuth } from '../context/AuthContext';
 
 interface LogOutcomeModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const LogOutcomeModal: React.FC<LogOutcomeModalProps> = ({
   onSaveOutcome,
 }) => {
   const { t } = useLanguage();
+  const { member } = useAuth();
 
   const [outcome, setOutcome] = useState<OutreachLog['outcome']>('Answered');
   const [note, setNote] = useState('');
@@ -57,7 +59,7 @@ export const LogOutcomeModal: React.FC<LogOutcomeModalProps> = ({
       outcome,
       note,
       nextFollowUp,
-      loggedBy: 'prajindezaa142@gmail.com',
+      loggedBy: member?.email || 'prajindezaa142@gmail.com',
       loggedAt: new Date().toISOString(),
     };
     onSaveOutcome(log, nextFollowUp);

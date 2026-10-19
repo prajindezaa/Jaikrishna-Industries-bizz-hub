@@ -119,9 +119,15 @@ export async function executeRule4ColdRevival(
   const cooldownTime = new Date(now.getTime() - cooldownDays * 24 * 60 * 60 * 1000);
 
   // 2. Fetch allowlisted 3 team members to evenly distribute tasks
-  const allowedSnap = await db.collection('allowed_emails').limit(3).get();
-  const members = allowedSnap.docs.map((d) => d.id);
-  const teamList = members.length > 0 ? members : ['prajindezaa142@gmail.com'];
+  const allowedSnap = await db.collection('allowed_emails').get();
+  const members = allowedSnap.docs
+    .map((d) => d.id.toLowerCase().trim())
+    .filter((e) => Boolean(e) && e !== 'prajindezaa142@gamil.com');
+  const teamList = members.length > 0 ? members : [
+    'prajindezaa142@gmail.com',
+    'jaikrishnaindustries1@gmail.com',
+    'srinisrkp@gmail.com',
+  ];
   let memberIdx = ruleData.roundRobinIndex || 0;
 
   // 3. Query candidates: leads in target stages, not deleted

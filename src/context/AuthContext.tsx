@@ -19,6 +19,16 @@ import { TeamMember, UserRoleLabel } from '../types';
 // Default initial admin email
 export const INITIAL_ADMIN_EMAIL = 'prajindezaa142@gmail.com';
 
+export const INITIAL_ALLOWED_MEMBERS: Record<
+  string,
+  { role: 'admin' | 'sales_manager' | 'owner'; label: UserRoleLabel; name: string }
+> = {
+  'prajindezaa142@gmail.com': { role: 'admin', label: 'Admin', name: 'Prajin Dezaa' },
+  'prajindezaa142@gamil.com': { role: 'admin', label: 'Admin', name: 'Prajin Dezaa' },
+  'jaikrishnaindustries1@gmail.com': { role: 'sales_manager', label: 'Sales Manager', name: 'Sales Manager' },
+  'srinisrkp@gmail.com': { role: 'owner', label: 'Owner', name: 'Srinivasan' },
+};
+
 interface AuthContextType {
   user: User | null;
   member: TeamMember | null;
@@ -56,8 +66,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser.email) return false;
     const email = currentUser.email.trim().toLowerCase();
 
-    // 1. Direct admin check or check allowed_emails in Firestore
-    let isAllowed = email === INITIAL_ADMIN_EMAIL.toLowerCase();
+    // 1. Direct allowlist check or check allowed_emails in Firestore
+    const predefinedMember = INITIAL_ALLOWED_MEMBERS[email];
+    let isAllowed = Boolean(predefinedMember);
 
     if (!isAllowed && db) {
       try {
@@ -100,8 +111,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // 2. Fetch or initialize member profile
-    let memberLabel: UserRoleLabel = email === INITIAL_ADMIN_EMAIL.toLowerCase() ? 'Admin' : 'Sales Manager';
-    let memberName = currentUser.displayName || email.split('@')[0];
+    let memberLabel: UserRoleLabel = predefinedMember ? predefinedMember.label : 'Sales Manager';
+    let memberName = currentUser.displayName || (predefinedMember ? predefinedMember.name : email.split('@')[0]);
     let memberPhone = '';
 
     if (db) {
@@ -222,7 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanEmail = email.trim().toLowerCase();
 
     // Verify against 3-member allowlist
-    let isAllowed = cleanEmail === INITIAL_ADMIN_EMAIL.toLowerCase();
+    let isAllowed = Boolean(INITIAL_ALLOWED_MEMBERS[cleanEmail]);
     if (!isAllowed && db) {
       try {
         const allowedDoc = await getDoc(doc(db, 'allowed_emails', cleanEmail));

@@ -425,31 +425,31 @@ export const SettingsView: React.FC = () => {
             <div className="divide-y divide-stone-100 text-xs">
               <div className="py-3 flex items-center justify-between">
                 <div>
-                  <div className="font-semibold text-stone-900">Primary Admin</div>
+                  <div className="font-semibold text-stone-900">Admin</div>
                   <div className="font-mono text-stone-500">prajindezaa142@gmail.com</div>
                 </div>
                 <span className="text-[10px] font-mono bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-bold">
-                  Admin (Setup)
-                </span>
-              </div>
-
-              <div className="py-3 flex items-center justify-between">
-                <div>
-                  <div className="font-semibold text-stone-900">The Owner</div>
-                  <div className="font-mono text-stone-500">Configured in allowed_emails</div>
-                </div>
-                <span className="text-[10px] font-mono bg-stone-100 text-stone-700 px-2 py-0.5 rounded font-medium">
-                  Owner
+                  Admin
                 </span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <div>
                   <div className="font-semibold text-stone-900">Sales Manager</div>
-                  <div className="font-mono text-stone-500">Configured in allowed_emails</div>
+                  <div className="font-mono text-stone-500">jaikrishnaindustries1@gmail.com</div>
                 </div>
-                <span className="text-[10px] font-mono bg-stone-100 text-stone-700 px-2 py-0.5 rounded font-medium">
+                <span className="text-[10px] font-mono bg-blue-100 text-blue-900 px-2 py-0.5 rounded font-bold">
                   Sales Manager
+                </span>
+              </div>
+
+              <div className="py-3 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-stone-900">Owner (Srinivasan)</div>
+                  <div className="font-mono text-stone-500">srinisrkp@gmail.com</div>
+                </div>
+                <span className="text-[10px] font-mono bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded font-bold">
+                  Owner
                 </span>
               </div>
             </div>

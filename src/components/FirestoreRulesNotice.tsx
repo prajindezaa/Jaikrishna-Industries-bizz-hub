@@ -28,11 +28,16 @@ service cloud.firestore {
         : '';
     }
     function isInitialAdmin() {
-      return isAuthenticated() && currentUserEmail() == 'prajindezaa142@gmail.com';
+      return isAuthenticated() && currentUserEmail() in ['prajindezaa142@gmail.com', 'prajindezaa142@gamil.com'];
     }
     function isAllowedMember() {
       return isAuthenticated() && (
-        currentUserEmail() == 'prajindezaa142@gmail.com' ||
+        currentUserEmail() in [
+          'prajindezaa142@gmail.com',
+          'prajindezaa142@gamil.com',
+          'jaikrishnaindustries1@gmail.com',
+          'srinisrkp@gmail.com'
+        ] ||
         (currentUserEmail() != '' && exists(/databases/$(database)/documents/allowed_emails/$(currentUserEmail())))
       );
     }

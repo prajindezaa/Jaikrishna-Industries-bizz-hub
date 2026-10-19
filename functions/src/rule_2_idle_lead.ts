@@ -81,9 +81,15 @@ export async function executeRule2IdleLeadCheck(
   const cutoffTime = new Date(now.getTime() - idleDaysThreshold * 24 * 60 * 60 * 1000);
 
   // Fetch allowlisted team members for round-robin assignment
-  const allowedSnap = await db.collection('allowed_emails').limit(3).get();
-  const members = allowedSnap.docs.map((d) => d.id);
-  const teamList = members.length > 0 ? members : ['prajindezaa142@gmail.com'];
+  const allowedSnap = await db.collection('allowed_emails').get();
+  const members = allowedSnap.docs
+    .map((d) => d.id.toLowerCase().trim())
+    .filter((e) => Boolean(e) && e !== 'prajindezaa142@gamil.com');
+  const teamList = members.length > 0 ? members : [
+    'prajindezaa142@gmail.com',
+    'jaikrishnaindustries1@gmail.com',
+    'srinisrkp@gmail.com',
+  ];
   let memberIdx = ruleData.roundRobinIndex || 0;
 
   // 2. Query candidates: customers in active stages, not deleted

@@ -229,10 +229,17 @@ export async function executeRule1CustomerStageChange(
   let assignedTo = customer.assignedTo;
   if (!assignedTo) {
     if (ruleData.fallbackAssignee === 'round_robin') {
-      const teamSnap = await db.collection('allowed_emails').limit(3).get();
-      const emails = teamSnap.docs.map((d) => d.id);
+      const teamSnap = await db.collection('allowed_emails').get();
+      const emails = teamSnap.docs
+        .map((d) => d.id.toLowerCase().trim())
+        .filter((e) => Boolean(e) && e !== 'prajindezaa142@gamil.com');
+      const teamList = emails.length > 0 ? emails : [
+        'prajindezaa142@gmail.com',
+        'jaikrishnaindustries1@gmail.com',
+        'srinisrkp@gmail.com',
+      ];
       const currentIndex = ruleData.roundRobinIndex || 0;
-      assignedTo = emails.length > 0 ? emails[currentIndex % emails.length] : 'prajindezaa142@gmail.com';
+      assignedTo = teamList[currentIndex % teamList.length];
       await ruleRef.update({ roundRobinIndex: currentIndex + 1 });
     } else {
       assignedTo = customer.updatedBy || 'prajindezaa142@gmail.com';

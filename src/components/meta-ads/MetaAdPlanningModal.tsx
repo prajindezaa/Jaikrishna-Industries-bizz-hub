@@ -1083,8 +1083,8 @@ export const MetaAdPlanningModal: React.FC<MetaAdPlanningModalProps> = ({
                   className="w-full px-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white"
                 >
                   <option value="prajindezaa142@gmail.com">prajindezaa142@gmail.com (Admin)</option>
-                  <option value="partner1@jaikrishnaindustries.com">partner1@jaikrishnaindustries.com</option>
-                  <option value="partner2@jaikrishnaindustries.com">partner2@jaikrishnaindustries.com</option>
+                  <option value="jaikrishnaindustries1@gmail.com">jaikrishnaindustries1@gmail.com (Sales Manager)</option>
+                  <option value="srinisrkp@gmail.com">srinisrkp@gmail.com (Owner)</option>
                 </select>
               </div>
             </div>

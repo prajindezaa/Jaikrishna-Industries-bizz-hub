@@ -36,6 +36,7 @@ import { CustomerImportModal } from '../components/CustomerImportModal';
 import { CustomerDetailDrawer } from '../components/CustomerDetailDrawer';
 import { LogOutcomeModal } from '../components/LogOutcomeModal';
 import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
+import { useAuth } from '../context/AuthContext';
 
 interface CustomersViewProps {
   onOpenNewCustomer?: () => void;
@@ -43,6 +44,7 @@ interface CustomersViewProps {
 
 export const CustomersView: React.FC<CustomersViewProps> = () => {
   const { t } = useLanguage();
+  const { member } = useAuth();
   const {
     customers,
     loadingCustomers,
@@ -125,7 +127,7 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
         status,
         source: leadSource,
         leadStage: 'New',
-        assignedTo: 'prajindezaa142@gmail.com',
+        assignedTo: member?.email || 'prajindezaa142@gmail.com',
         tags: ['New Inbound'],
         notes: notes.trim(),
       });

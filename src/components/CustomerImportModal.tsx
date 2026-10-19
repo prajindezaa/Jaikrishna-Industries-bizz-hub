@@ -24,6 +24,7 @@ import {
   ImportPreviewResult,
 } from '../lib/import';
 import { downloadCustomerImportTemplate } from '../lib/export';
+import { useAuth } from '../context/AuthContext';
 
 interface CustomerImportModalProps {
   isOpen: boolean;
@@ -38,6 +39,7 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
   existingCustomers,
   onImportComplete,
 }) => {
+  const { member } = useAuth();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [file, setFile] = useState<File | null>(null);
   const [headers, setHeaders] = useState<string[]>([]);
@@ -86,7 +88,7 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
     const result = validateAndMapRows(rawRows, mapping, existingPhones, {
       status: defaultStatus,
       source: defaultSource,
-      assignedTo: 'prajindezaa142@gmail.com',
+      assignedTo: member?.email || 'prajindezaa142@gmail.com',
     });
     setPreview(result);
     setStep(3);
@@ -118,7 +120,7 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
         status: row.data.status || defaultStatus,
         source: row.data.source || defaultSource,
         leadStage: 'New',
-        assignedTo: 'prajindezaa142@gmail.com',
+        assignedTo: member?.email || 'prajindezaa142@gmail.com',
         tags: ['Imported Batch'],
         notes: row.data.notes || '',
         totalOrdersCount: 0,

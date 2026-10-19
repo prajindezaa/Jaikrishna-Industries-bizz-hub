@@ -182,9 +182,9 @@ export const AssistantView: React.FC = () => {
         notes: f.notes,
       })),
       teamMembers: [
-        { email: 'prajindezaa142@gmail.com', role: 'Primary Admin' },
-        { email: 'theowner@jaikrishnaindustries.com', role: 'Owner' },
-        { email: 'salesmanager@jaikrishnaindustries.com', role: 'Sales Manager' },
+        { email: 'prajindezaa142@gmail.com', role: 'Admin' },
+        { email: 'jaikrishnaindustries1@gmail.com', role: 'Sales Manager' },
+        { email: 'srinisrkp@gmail.com', role: 'Owner' },
       ],
       notificationSettings: {
         timezone: 'Asia/Kolkata (IST)',

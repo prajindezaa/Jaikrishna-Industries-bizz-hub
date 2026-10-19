@@ -48,7 +48,7 @@ import {
 } from 'firebase/firestore';
 
 export const AutomationRulesView: React.FC = () => {
-  const { user } = useAuth();
+  const { user, member } = useAuth();
   const { t } = useLanguage();
   const { customers, tasks } = useApp();
 
@@ -185,7 +185,9 @@ export const AutomationRulesView: React.FC = () => {
       lookaheadFestivalDays: 7,
       allowEmptyNotification: false,
       memberSettings: {
-        'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:30', channels: { push: true, inApp: true, email: true }, sendIfEmpty: false },
+        'prajindezaa142@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
+        'jaikrishnaindustries1@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
+        'srinisrkp@gmail.com': { enabled: true, deliveryTime: '08:00', channels: { push: true, inApp: true, email: true }, sendIfEmpty: true },
       },
     },
     updatedBy: 'system',
@@ -395,7 +397,7 @@ export const AutomationRulesView: React.FC = () => {
     id: 'sample',
     companyName: 'Shri Murugan Camphor Stores',
     contactPerson: 'Murugan',
-    assignedTo: 'prajindezaa142@gmail.com',
+    assignedTo: member?.email || 'prajindezaa142@gmail.com',
   }) as Customer | { companyName: string; contactPerson: string; assignedTo?: string };
 
   return (

@@ -89,8 +89,8 @@ export const PastAdWizardModal: React.FC<PastAdWizardModalProps> = ({
   const { member } = useAuth();
   const teamMembers = [
     { email: 'prajindezaa142@gmail.com', name: 'Prajin (Admin)' },
-    { email: 'partner1@jaikrishnaindustries.com', name: 'Partner 1' },
-    { email: 'partner2@jaikrishnaindustries.com', name: 'Partner 2' },
+    { email: 'jaikrishnaindustries1@gmail.com', name: 'Sales Manager' },
+    { email: 'srinisrkp@gmail.com', name: 'Srini (Owner)' },
   ];
   const {
     metaAds,
