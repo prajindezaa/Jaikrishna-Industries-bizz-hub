@@ -179,20 +179,42 @@ export async function routeNotificationIntent(
     await spacingDocRef.set({ lastSentMs: nowMs, lastDedupe: intent.dedupeKey }, { merge: true });
   }
 
-  // 6. Check Daily Cap (default 10 for task_overdue, 30 total)
+  // 6. Check Daily Budget & Push Allocation (10-15 per member/day, 5 reserved for reminders)
   const capDocId = `daily_cap_${recipientEmail}_${todayStrIST}`;
   const capDocRef = db.collection('notification_caps').doc(capDocId);
   const capDoc = await capDocRef.get();
   const capData = capDoc.exists ? capDoc.data() : {};
   const currentTotal = capData?.total || 0;
+  const currentPushTotal = capData?.pushTotal || 0;
   const currentTypeTotal = capData?.[intent.type] || 0;
-  const typeMax = prefs?.caps?.[intent.type] ?? 10;
-  const totalMax = prefs?.caps?.total ?? 35;
 
-  if ((currentTypeTotal >= typeMax || currentTotal >= totalMax) && !intent.bypassQuietHours) {
-    console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Daily cap reached (${currentTypeTotal}/${typeMax} for ${intent.type})`);
-    await logNotificationOutcome(db, intent, 'suppressed', [], 'cap_exceeded');
-    return { accepted: false, suppressionReason: 'cap_exceeded', channelsDelivered: [] };
+  // Member budget config (default 12, max 15)
+  const memberBudget = Math.min(prefs?.dailyPushBudget ?? 12, 15);
+  const reminderReserve = 5;
+  const isReminder = intent.priority === 'high' || intent.priority === 'critical' || intent.type.startsWith('task') || intent.type.startsWith('plan_morning');
+
+  if (!intent.bypassQuietHours) {
+    // 30-Minute Window Throttle: Max 2 pushes in any 30-minute window
+    const windowTimes: number[] = (capData?.recentPushTimestamps || []).filter((t: number) => nowMs - t < 30 * 60 * 1000);
+    if (windowTimes.length >= 2 && intent.priority !== 'critical') {
+      console.log(`[Router] Intent ${intent.dedupeKey} suppressed: 30-minute window limit (2 pushes already sent).`);
+      await logNotificationOutcome(db, intent, 'suppressed', [], 'rate_limit_30m');
+      return { accepted: false, suppressionReason: 'rate_limit_30m', channelsDelivered: [] };
+    }
+
+    // Engagement cannot crowd out high-priority reminder reserve
+    if (!isReminder && currentPushTotal >= (memberBudget - reminderReserve)) {
+      console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Engagement budget exhausted (${currentPushTotal}/${memberBudget}, reserving ${reminderReserve} for reminders).`);
+      await logNotificationOutcome(db, intent, 'suppressed', [], 'budget_engagement_exhausted');
+      return { accepted: false, suppressionReason: 'budget_engagement_exhausted', channelsDelivered: [] };
+    }
+
+    // Absolute hard cap check
+    if (currentPushTotal >= memberBudget) {
+      console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Daily push budget reached (${currentPushTotal}/${memberBudget}).`);
+      await logNotificationOutcome(db, intent, 'suppressed', [], 'budget_exceeded');
+      return { accepted: false, suppressionReason: 'budget_exceeded', channelsDelivered: [] };
+    }
   }
 
   // 7. Check Quiet Hours (Asia/Kolkata)
@@ -394,9 +416,14 @@ export async function routeNotificationIntent(
     }
   }
 
-  // Increment daily cap count
+  // Increment daily cap count & budget metrics
+  const isPushDelivered = channelsDelivered.includes('push');
   await capDocRef.set({
     total: (currentTotal || 0) + 1,
+    pushTotal: isPushDelivered ? (currentPushTotal || 0) + 1 : currentPushTotal,
+    recentPushTimestamps: isPushDelivered
+      ? [...((capData?.recentPushTimestamps || []).filter((t: number) => nowMs - t < 30 * 60 * 1000)), nowMs]
+      : (capData?.recentPushTimestamps || []),
     [intent.type]: (currentTypeTotal || 0) + 1,
     lastUpdated: nowIso,
   }, { merge: true });

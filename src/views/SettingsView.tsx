@@ -65,7 +65,8 @@ export const SettingsView: React.FC = () => {
     quietHoursEnabled: true,
     quietHoursStart: '21:00',
     quietHoursEnd: '08:00',
-    dailyEmailCap: 5,
+    dailyEmailCap: 3,
+    dailyPushBudget: 12,
   });
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [prefSaveSuccess, setPrefSaveSuccess] = useState(false);
@@ -95,7 +96,8 @@ export const SettingsView: React.FC = () => {
               quietHoursEnabled: np.quietHours?.enabled !== false,
               quietHoursStart: np.quietHours?.start || '21:00',
               quietHoursEnd: np.quietHours?.end || '08:00',
-              dailyEmailCap: np.dailyEmailCap || 5,
+              dailyEmailCap: np.dailyEmailCap || 3,
+              dailyPushBudget: np.dailyPushBudget || 12,
             });
           }
         }
@@ -137,6 +139,7 @@ export const SettingsView: React.FC = () => {
               end: prefs.quietHoursEnd,
             },
             dailyEmailCap: prefs.dailyEmailCap,
+            dailyPushBudget: prefs.dailyPushBudget || 12,
           },
           updatedAt: serverTimestamp(),
         },
@@ -377,6 +380,33 @@ export const SettingsView: React.FC = () => {
                   className="rounded border-stone-300 text-amber-800"
                 />
               </label>
+
+              {/* Daily Push Notification Budget Slider */}
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-stone-900">Daily Push Notification Budget</div>
+                    <div className="text-[11px] text-stone-500">Total push alerts per day (10 to 15 max). 5 are reserved for high-priority reminders.</div>
+                  </div>
+                  <span className="font-mono font-bold text-xs px-2.5 py-1 rounded bg-[#881337]/10 text-[#881337] border border-[#881337]/20">
+                    {prefs.dailyPushBudget || 12} alerts / day
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="15"
+                  step="1"
+                  value={prefs.dailyPushBudget || 12}
+                  onChange={(e) => setPrefs({ ...prefs, dailyPushBudget: parseInt(e.target.value, 10) })}
+                  className="w-full accent-[#881337] cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-stone-400 font-mono">
+                  <span>10 (Minimum)</span>
+                  <span>12 (Balanced)</span>
+                  <span>15 (Maximum cap)</span>
+                </div>
+              </div>
 
               {/* Email Delivery Options & Cap */}
               {prefs.emailEnabled && (

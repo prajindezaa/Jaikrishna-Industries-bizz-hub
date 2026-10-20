@@ -116,6 +116,23 @@ async function main() {
     console.error('  ✗ Rule 7 failed:', e);
   }
 
+  // 7. Phase 2 Engagement & Attention Engine (Condition-based nudges within daily push budget)
+  console.log('\n▶ Running Phase 2 Engagement Engine for 3 Team Members...');
+  try {
+    const { runEngagementEngineForMember } = await import('../functions/src/engagement_engine.js');
+    const members = ['prajindezaa142@gmail.com', 'jaikrishnaindustries1@gmail.com', 'srinisrkp@gmail.com'];
+    for (const member of members) {
+      console.log(`  Evaluating engagement nudges for ${member}...`);
+      const engResult = await runEngagementEngineForMember(db as any, member);
+      console.log(`  ✓ ${member}: evaluated=${engResult.evaluated}, sent=${engResult.sent}, suppressed=${engResult.suppressed}`);
+      if (engResult.details.length > 0) {
+        engResult.details.forEach((d) => console.log(`    - ${d}`));
+      }
+    }
+  } catch (e) {
+    console.error('  ✗ Engagement engine failed:', e);
+  }
+
   console.log('\n========================================================');
   console.log('✅ ALL AUTOMATIONS FINISHED SUCCESSFULLY');
   console.log('========================================================');
