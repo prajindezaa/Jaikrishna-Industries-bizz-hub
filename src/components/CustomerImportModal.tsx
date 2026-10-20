@@ -156,7 +156,8 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
         customerType: (row.data.groupName || 'Distributor') as any,
         status: row.data.status || defaultStatus,
         source: row.data.source || defaultSource,
-        leadStage: 'New',
+        leadStage: row.data.leadStage || 'New',
+        nextFollowUpDate: row.data.nextFollowUpDate,
         assignedTo: member?.email || 'prajindezaa142@gmail.com',
         tags: ['Imported Batch'],
         notes: row.data.notes || '',
@@ -401,13 +402,77 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-stone-700 mb-1">City / Location</label>
+                  <label className="block font-semibold text-stone-700 mb-1">District (TN 38)</label>
+                  <select
+                    value={mapping.district || ''}
+                    onChange={(e) => setMapping({ ...mapping, district: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
+                  >
+                    <option value="">-- Select Column (or Auto Salem) --</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-stone-700 mb-1">City / Town</label>
                   <select
                     value={mapping.city}
                     onChange={(e) => setMapping({ ...mapping, city: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
                   >
                     <option value="">-- Select Column --</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-stone-700 mb-1">Lead Stage</label>
+                  <select
+                    value={mapping.leadStage || ''}
+                    onChange={(e) => setMapping({ ...mapping, leadStage: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
+                  >
+                    <option value="">-- Select Column (or Auto 'New') --</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-stone-700 mb-1">Customer Status</label>
+                  <select
+                    value={mapping.status || ''}
+                    onChange={(e) => setMapping({ ...mapping, status: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
+                  >
+                    <option value="">-- Select Column (or Default Below) --</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-stone-700 mb-1">Next Follow-up Date</label>
+                  <select
+                    value={mapping.nextFollowUpDate || ''}
+                    onChange={(e) => setMapping({ ...mapping, nextFollowUpDate: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
+                  >
+                    <option value="">-- Select Column (Optional) --</option>
                     {headers.map((h) => (
                       <option key={h} value={h}>
                         {h}

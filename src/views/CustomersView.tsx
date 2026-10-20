@@ -134,6 +134,8 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   const [placeCity, setPlaceCity] = useState('Salem');
   const [formGroupId, setFormGroupId] = useState<string | null>(null);
   const [status, setStatus] = useState<CustomerStatus>('New customer');
+  const [formLeadStage, setFormLeadStage] = useState<LeadStage>('New');
+  const [formNextFollowUpDate, setFormNextFollowUpDate] = useState('');
   const [leadSource, setLeadSource] = useState<LeadSource>('Meta Ads');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -191,6 +193,8 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
         setContactPerson('');
         setRawPhone('');
         setNotes('');
+        setFormLeadStage('New');
+        setFormNextFollowUpDate('');
         setDuplicateConflict(null);
         setFormError(null);
       } else {
@@ -199,6 +203,8 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
         setContactPerson('');
         setRawPhone('');
         setNotes('');
+        setFormLeadStage('New');
+        setFormNextFollowUpDate('');
         setDuplicateConflict(null);
         setFormError(null);
       }
@@ -249,7 +255,8 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
       customerType: (resolvedGroup?.name || 'Retailer') as CustomerType,
       status,
       source: leadSource,
-      leadStage: 'New' as LeadStage,
+      leadStage: formLeadStage || ('New' as LeadStage),
+      nextFollowUpDate: formNextFollowUpDate ? formNextFollowUpDate : undefined,
       assignedTo: member?.email || 'prajindezaa142@gmail.com',
       tags: ['New Inbound'],
       notes: notes.trim(),
@@ -1430,6 +1437,35 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                     <option value="New customer">New customer</option>
                     <option value="Old customer">Old customer</option>
                   </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Lead Stage</label>
+                  <select
+                    value={formLeadStage}
+                    onChange={(e) => setFormLeadStage(e.target.value as LeadStage)}
+                    className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                  >
+                    <option value="New">New</option>
+                    <option value="Contacted">Contacted</option>
+                    <option value="Interested">Interested</option>
+                    <option value="Sample sent">Sample sent</option>
+                    <option value="Negotiation">Negotiation</option>
+                    <option value="Ordered">Ordered</option>
+                    <option value="Not interested">Not interested</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Next Follow-up Date</label>
+                  <input
+                    type="date"
+                    value={formNextFollowUpDate}
+                    onChange={(e) => setFormNextFollowUpDate(e.target.value)}
+                    className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                  />
                 </div>
               </div>
 

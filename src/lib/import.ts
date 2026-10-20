@@ -11,11 +11,14 @@ export interface ColumnMapping {
   companyName: string;
   contactPerson: string;
   phone: string;
+  district?: string;
   city: string;
   area: string;
   groupName?: string;
   customerType?: string; // legacy fallback
   status: string;
+  leadStage?: string;
+  nextFollowUpDate?: string;
   source: string;
   notes: string;
 }
@@ -62,10 +65,13 @@ export function autoDetectColumnMapping(headers: string[]): ColumnMapping {
     companyName: findMatch(['company name', 'company', 'shop name', 'shop', 'business name', 'store name']),
     contactPerson: findMatch(['contact person', 'contact', 'name', 'person', 'owner name']),
     phone: findMatch(['phone', 'mobile', 'whatsapp', 'contact number', 'phone number', 'cell']),
+    district: findMatch(['district', 'tn district', 'region']),
     city: findMatch(['city', 'place', 'location', 'town']),
     area: findMatch(['area', 'street', 'locality', 'address']),
     groupName: findMatch(['customer group', 'group', 'group name', 'segment', 'customer type', 'type', 'category']),
     status: findMatch(['status', 'customer status']),
+    leadStage: findMatch(['lead stage', 'stage', 'sales stage', 'pipeline stage']),
+    nextFollowUpDate: findMatch(['next follow-up date', 'next follow up date', 'follow up date', 'followup date', 'next follow up', 'followup']),
     source: findMatch(['source', 'lead source', 'campaign']),
     notes: findMatch(['notes', 'remarks', 'comments', 'inquiry']),
   };
@@ -204,22 +210,49 @@ export function validateAndMapRows(
     const rowSource = (mapping.source ? String(row[mapping.source] || '').trim() : '') as LeadSource;
     const finalSource = rowSource || defaults.source;
 
+    // Parse status from file row if mapped, otherwise use defaults.status
+    const rawStatus = mapping.status ? String(row[mapping.status] || '').trim() : '';
+    const finalStatus: CustomerStatus = (rawStatus === 'Old customer' || rawStatus === 'New customer')
+      ? rawStatus
+      : defaults.status;
+
+    // Parse lead stage from file row if mapped (default 'New')
+    const rawStage = mapping.leadStage ? String(row[mapping.leadStage] || '').trim() : '';
+    const validStages = ['New', 'Contacted', 'Interested', 'Sample sent', 'Negotiation', 'Ordered', 'Not interested'];
+    const matchedStage = validStages.find((s) => s.toLowerCase() === rawStage.toLowerCase());
+    const finalStage: any = matchedStage || 'New';
+
+    // Parse district from file row if mapped, otherwise fallback to city
+    const rowDistrict = mapping.district ? String(row[mapping.district] || '').trim() : '';
+    const finalDistrict = rowDistrict || city || 'Salem';
+
+    // Parse next follow up date if mapped
+    const rawFollowUp = mapping.nextFollowUpDate ? String(row[mapping.nextFollowUpDate] || '').trim() : '';
+    let finalFollowUp: string | undefined = undefined;
+    if (rawFollowUp) {
+      const parsedDate = new Date(rawFollowUp);
+      if (!isNaN(parsedDate.getTime())) {
+        finalFollowUp = parsedDate.toISOString().slice(0, 10);
+      }
+    }
+
     const parsedData: Partial<Customer> = {
       companyName: company,
       contactPerson: contact || company,
       phone: normalized,
       whatsapp: normalized,
-      place: { area, city, district: city, state: 'Tamil Nadu' },
+      place: { area, city, district: finalDistrict, state: 'Tamil Nadu' },
       groupId: resolvedGroupId,
       groupName: resolvedGroupName,
       groupAssignedAt: resolvedGroupId ? now : undefined,
       groupAssignedBy: resolvedGroupId ? defaults.assignedTo : undefined,
       previousGroupId: null,
       customerType: resolvedGroupName as CustomerType,
-      status: defaults.status,
+      status: finalStatus,
       source: finalSource,
       assignedTo: defaults.assignedTo,
-      leadStage: 'New',
+      leadStage: finalStage,
+      nextFollowUpDate: finalFollowUp,
       tags: ['Imported Batch'],
       notes,
       totalOrdersCount: 0,

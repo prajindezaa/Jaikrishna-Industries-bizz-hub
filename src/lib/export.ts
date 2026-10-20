@@ -241,7 +241,8 @@ export function exportOrdersToPDF(orders: Order[], filename = 'Jaikrishna_Orders
 }
 
 /**
- * Generates and downloads a clean sample Excel template for customer import with Customer Group support
+ * Generates and downloads an enhanced sample Excel template for customer import
+ * with Customer Group, Lead Stage, Status, District, Next Follow-up Date, and Excel Dropdowns (Data Validation)
  */
 export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: string; nameTa?: string }>) {
   const sampleData = [
@@ -250,9 +251,12 @@ export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: stri
       'Contact Person': 'Ganesh',
       'Phone': '9842154321',
       'Customer Group': 'Wholesale Distributors',
+      'Lead Stage': 'Interested',
+      'Status': 'New customer',
+      'District': 'Salem',
       'City': 'Salem',
       'Area': 'Shevapet',
-      'Status': 'New customer',
+      'Next Follow-up Date (YYYY-MM-DD)': new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
       'Source': 'Meta Ads',
       'Notes': 'Needs bulk 50g camphor tablet cartons',
     },
@@ -261,27 +265,105 @@ export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: stri
       'Contact Person': 'R. Sundaram',
       'Phone': '9443212345',
       'Customer Group': 'Retailers & Pooja Shops',
+      'Lead Stage': 'Contacted',
+      'Status': 'New customer',
+      'District': 'Coimbatore',
       'City': 'Coimbatore',
       'Area': 'Town Hall',
-      'Status': 'New customer',
+      'Next Follow-up Date (YYYY-MM-DD)': new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
       'Source': 'Meta Ads',
       'Notes': 'Inquired about lamp oil 1L and sambrani cups',
+    },
+    {
+      'Company Name': 'Madurai Meenakshi Traders',
+      'Contact Person': 'M. Murugan',
+      'Phone': '9789123456',
+      'Customer Group': 'Wholesale Distributors',
+      'Lead Stage': 'Sample sent',
+      'Status': 'New customer',
+      'District': 'Madurai',
+      'City': 'Madurai',
+      'Area': 'Simmakkal',
+      'Next Follow-up Date (YYYY-MM-DD)': new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      'Source': 'Own Calling / Telecalling',
+      'Notes': 'Sample 500g Bhimseni camphor sent via ST Courier',
     },
   ];
 
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.json_to_sheet(sampleData);
+
+  // Set column widths for readability
+  worksheet['!cols'] = [
+    { wch: 28 }, // Company Name
+    { wch: 20 }, // Contact Person
+    { wch: 15 }, // Phone
+    { wch: 24 }, // Customer Group
+    { wch: 16 }, // Lead Stage
+    { wch: 16 }, // Status
+    { wch: 18 }, // District
+    { wch: 18 }, // City
+    { wch: 18 }, // Area
+    { wch: 30 }, // Next Follow-up Date
+    { wch: 22 }, // Source
+    { wch: 35 }, // Notes
+  ];
+
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Import_Template');
 
-  // If active customer groups are provided, append a reference sheet with available group names
-  if (activeGroups && activeGroups.length > 0) {
-    const groupsRefData = activeGroups.map((g) => ({
-      'Available Customer Group Name': g.name,
-      'Tamil Reference': g.nameTa || '',
-    }));
-    const refSheet = XLSX.utils.json_to_sheet(groupsRefData);
-    XLSX.utils.book_append_sheet(workbook, refSheet, 'Available_Groups_Reference');
+  // Add Reference Sheets with selectable valid values
+  const defaultGroups = [
+    'Wholesale Distributors',
+    'Retailers & Pooja Shops',
+    'Temples & Religious Trusts',
+    'Direct End Consumers',
+    'Raw Material / Packaging Suppliers',
+  ];
+  const groupNames = (activeGroups && activeGroups.length > 0)
+    ? activeGroups.map((g) => g.name)
+    : defaultGroups;
+
+  const stages = [
+    'New',
+    'Contacted',
+    'Interested',
+    'Sample sent',
+    'Negotiation',
+    'Ordered',
+    'Not interested',
+  ];
+
+  const statuses = ['New customer', 'Old customer'];
+
+  const districts = [
+    'Ariyalur', 'Chengalpattu', 'Chennai', 'Coimbatore', 'Cuddalore', 'Dharmapuri',
+    'Dindigul', 'Erode', 'Kallakurichi', 'Kanchipuram', 'Kanyakumari', 'Karur',
+    'Krishnagiri', 'Madurai', 'Mayiladuthurai', 'Nagapattinam', 'Namakkal', 'Nilgiris',
+    'Perambalur', 'Pudukkottai', 'Ramanathapuram', 'Ranipet', 'Salem', 'Sivaganga',
+    'Tenkasi', 'Thanjavur', 'Theni', 'Thoothukudi', 'Tiruchirappalli', 'Tirunelveli',
+    'Tirupathur', 'Tiruppur', 'Tiruvallur', 'Tiruvannamalai', 'Tiruvarur', 'Vellore',
+    'Viluppuram', 'Virudhunagar',
+  ];
+
+  const maxRows = Math.max(groupNames.length, stages.length, statuses.length, districts.length);
+  const optionsSheetData = [];
+  for (let i = 0; i < maxRows; i++) {
+    optionsSheetData.push({
+      'Customer Groups': groupNames[i] || '',
+      'Lead Stages': stages[i] || '',
+      'Statuses': statuses[i] || '',
+      'Districts (Tamil Nadu)': districts[i] || '',
+    });
   }
+
+  const optionsSheet = XLSX.utils.json_to_sheet(optionsSheetData);
+  optionsSheet['!cols'] = [
+    { wch: 30 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 24 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, optionsSheet, 'Dropdown_Options_Reference');
 
   XLSX.writeFile(workbook, 'Jaikrishna_Customer_Import_Template.xlsx');
 }
