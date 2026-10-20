@@ -246,16 +246,7 @@ export async function executeRule7MorningPlan(
       continue;
     }
 
-    // Record deduplication receipt first
-    await dedupeRef.set({
-      deliveredAt: new Date().toISOString(),
-      memberEmail: email,
-      date: todayStr,
-      scheduledTime: chosenTime,
-      totalCount,
-    });
-
-    // Dispatch via centralized Notification Router (handles In-App, FCM Push, quiet hours, snooze)
+    // Dispatch via centralized Notification Router (handles In-App bell, FCM Push, quiet hours, snooze)
     await routeNotificationIntent(db, {
       recipientEmail: email,
       title: `Good Morning! Daily Plan — ${todayStr}`,
@@ -267,6 +258,15 @@ export async function executeRule7MorningPlan(
       deepLink: '/tasks',
       dedupeKey: `morning_plan_${email}_${todayStr}`,
       bypassQuietHours: Boolean(options?.forceRunNow),
+    });
+
+    // Record deduplication receipt after dispatch
+    await dedupeRef.set({
+      deliveredAt: new Date().toISOString(),
+      memberEmail: email,
+      date: todayStr,
+      scheduledTime: chosenTime,
+      totalCount,
     });
 
     // Email delivery (Respects global daily cap, falls back to Push & In-App on cap hit)

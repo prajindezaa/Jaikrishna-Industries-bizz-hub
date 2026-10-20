@@ -210,16 +210,28 @@ export async function routeNotificationIntent(
   const pushAllowed = prefs?.channels?.push !== false;
   if (pushAllowed) {
     try {
-      const memberDocRef = db.collection('members').doc(recipientEmail);
-      let devicesSnap = { docs: [] as any[] };
-      if (typeof memberDocRef.collection === 'function') {
-        devicesSnap = await memberDocRef
+      // Query devices from both `members/{email}/devices` and `team_members/{email}/devices`
+      let devicesSnap = await db
+        .collection('members')
+        .doc(recipientEmail)
+        .collection('devices')
+        .where('active', '==', true)
+        .get()
+        .catch(() => ({ docs: [] as any[] }));
+
+      if (!devicesSnap.docs || devicesSnap.docs.length === 0) {
+        devicesSnap = await db
+          .collection('team_members')
+          .doc(recipientEmail)
           .collection('devices')
           .where('active', '==', true)
-          .get();
+          .get()
+          .catch(() => ({ docs: [] as any[] }));
       }
 
-      const devices = devicesSnap.docs.map((d) => ({ id: d.id, token: d.data()?.token })).filter((d) => Boolean(d.token));
+      const devices = (devicesSnap.docs || [])
+        .map((d: any) => ({ id: d.id, token: d.data()?.token }))
+        .filter((d: any) => Boolean(d.token));
 
       if (devices.length > 0) {
         const messaging = admin.messaging();
