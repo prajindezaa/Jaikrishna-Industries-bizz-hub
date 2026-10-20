@@ -290,13 +290,15 @@ export async function routeNotificationIntent(
         let pushSuccessCount = 0;
         for (const dev of devices) {
           try {
+            // Data-only message: no top-level `notification` field.
+            // When `notification` is present, the browser auto-shows it AND
+            // onBackgroundMessage fires showNotification — causing duplicates.
+            // With data-only, only the service worker controls display.
             const sendResult = await messaging.send({
               token: dev.token,
-              notification: {
+              data: {
                 title: intent.title,
                 body: intent.body,
-              },
-              data: {
                 deepLink: intent.deepLink || '/',
                 tag: intent.type || 'jaikrishna-alert',
                 priority: intent.priority || 'normal',

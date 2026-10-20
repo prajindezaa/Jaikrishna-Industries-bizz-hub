@@ -288,11 +288,9 @@ app.post('/api/devices/test-push', standardRateLimiter, requireAuth, async (req:
       try {
         await messaging.send({
           token: dev.token,
-          notification: {
+          data: {
             title: title || 'Test Push — Jaikrishna Industries',
             body: body || 'Real Web Push is working seamlessly on this device!',
-          },
-          data: {
             deepLink: '/settings',
             tag: 'test-push',
             timestamp: new Date().toISOString(),
