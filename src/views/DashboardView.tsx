@@ -40,6 +40,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
 import { normalizePhone, formatPhoneDisplay } from '../lib/phone';
 import { formatINR } from '../lib/meta-ads-utils';
+import { TodaysFocusCard } from '../components/dashboard/TodaysFocusCard';
 
 interface DashboardViewProps {
   onNavigate: (module: ActiveModule) => void;
@@ -278,6 +279,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <img src="/icon.svg" alt="" className="w-full h-full object-contain" />
         </div>
       </div>
+
+      {/* Phase 3 Today's Focus Card */}
+      <TodaysFocusCard onNavigate={onNavigate} onOpenNewCustomer={onOpenNewCustomer} />
 
       {/* KPI Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
