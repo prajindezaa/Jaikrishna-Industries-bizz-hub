@@ -246,7 +246,52 @@ export async function executeRule7MorningPlan(
       continue;
     }
 
-    // Dispatch via centralized Notification Router (handles In-App bell, FCM Push, quiet hours, snooze)
+    // Format rich HTML for the email channel
+    const formatItemList = (items: { id: string; title: string; link: string }[]) => {
+      const cap = 5;
+      const displayItems = items.slice(0, cap).map((item) => {
+        return `<li><a href="${item.link}">${item.title}</a></li>`;
+      });
+      if (items.length > cap) {
+        displayItems.push(`<li><em>...and ${items.length - cap} more</em></li>`);
+      }
+      return displayItems.join('');
+    };
+
+    const appUrl = (process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '');
+
+    const todayTaskItems = tasksTodaySnap.docs.map((d) => ({
+      id: d.id,
+      title: d.data().title || d.id,
+      link: `${appUrl}/tasks?id=${d.id}`,
+    }));
+
+    const overdueTaskItems = overdueTasks.map((d) => ({
+      id: d.id,
+      title: d.data().title || d.id,
+      link: `${appUrl}/tasks?id=${d.id}`,
+    }));
+
+    const newLeadItems = newLeads.map((d) => ({
+      id: d.id,
+      title: d.data().companyName || d.data().contactPerson || d.id,
+      link: `${appUrl}/customers?id=${d.id}`,
+    }));
+
+    const emailHtml = `
+      <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
+        <h2 style="color: #881337;">Vanakkam! Morning Plan — ${todayStr}</h2>
+        <p>Here is your daily operational summary:</p>
+        ${todayTaskItems.length > 0 ? `<h3>Today's Tasks (${todayTaskItems.length})</h3><ul>${formatItemList(todayTaskItems)}</ul>` : '<p>No tasks scheduled today.</p>'}
+        ${overdueTaskItems.length > 0 ? `<h3 style="color: #b91c1c;">⚠️ Overdue Tasks (${overdueTaskItems.length})</h3><ul>${formatItemList(overdueTaskItems)}</ul>` : ''}
+        ${newLeadItems.length > 0 ? `<h3>New Leads (${newLeadItems.length})</h3><ul>${formatItemList(newLeadItems)}</ul>` : ''}
+        <p style="margin-top: 20px;">
+          <a href="${appUrl}/tasks" style="background: #881337; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Open Tasks</a>
+        </p>
+      </div>
+    `;
+
+    // Dispatch via centralized Notification Router (handles In-App bell, FCM Push, and rich Email via Channel C)
     console.log(`[Rule 7] ▶ Dispatching notification for ${email} via routeNotificationIntent (bypassQuietHours=${Boolean(options?.forceRunNow)})...`);
     const routerResult = await routeNotificationIntent(db, {
       recipientEmail: email,
@@ -259,6 +304,7 @@ export async function executeRule7MorningPlan(
       deepLink: '/tasks',
       dedupeKey: `morning_plan_${email}_${todayStr}`,
       bypassQuietHours: Boolean(options?.forceRunNow),
+      emailHtml,
     });
     console.log(`[Rule 7] ✓ routeNotificationIntent returned: accepted=${routerResult.accepted} | channels=[${routerResult.channelsDelivered.join(', ')}] | suppression=${routerResult.suppressionReason || 'none'}`);
 
@@ -275,68 +321,6 @@ export async function executeRule7MorningPlan(
         suppressionReason: routerResult.suppressionReason || null,
       },
     });
-
-    // Email delivery (Respects global daily cap, falls back to Push & In-App on cap hit)
-    if (memberCfg.channels?.email) {
-      const counterRef = db.collection('system_settings').doc(`email_counter_${todayStr}`);
-      const counterDoc = await counterRef.get();
-      const currentCount = counterDoc.exists ? (counterDoc.data()?.count || 0) : 0;
-
-      if (currentCount >= 80) {
-        console.warn(`[Rule 7] Daily email cap reached (${currentCount}/80). Suppressing email for ${email}; delivered via In-App & Push.`);
-      } else {
-        const formatItemList = (items: { id: string; title: string; link: string }[]) => {
-          const cap = 5;
-          const displayItems = items.slice(0, cap).map((item) => {
-            return `<li><a href="${item.link}">${item.title}</a></li>`;
-          });
-          if (items.length > cap) {
-            displayItems.push(`<li><em>...and ${items.length - cap} more</em></li>`);
-          }
-          return displayItems.join('');
-        };
-
-        const appUrl = (process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '');
-
-        const todayTaskItems = tasksTodaySnap.docs.map((d) => ({
-          id: d.id,
-          title: d.data().title || d.id,
-          link: `${appUrl}/tasks?id=${d.id}`,
-        }));
-
-        const overdueTaskItems = overdueTasks.map((d) => ({
-          id: d.id,
-          title: d.data().title || d.id,
-          link: `${appUrl}/tasks?id=${d.id}`,
-        }));
-
-        const newLeadItems = newLeads.map((d) => ({
-          id: d.id,
-          title: d.data().companyName || d.data().contactPerson || d.id,
-          link: `${appUrl}/customers?id=${d.id}`,
-        }));
-
-        const emailHtml = `
-          <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
-            <h2 style="color: #881337;">Vanakkam! Morning Plan — ${todayStr}</h2>
-            <p>Here is your daily operational summary:</p>
-            ${todayTaskItems.length > 0 ? `<h3>Today's Tasks (${todayTaskItems.length})</h3><ul>${formatItemList(todayTaskItems)}</ul>` : '<p>No tasks scheduled today.</p>'}
-            ${overdueTaskItems.length > 0 ? `<h3 style="color: #b91c1c;">⚠️ Overdue Tasks (${overdueTaskItems.length})</h3><ul>${formatItemList(overdueTaskItems)}</ul>` : ''}
-            ${newLeadItems.length > 0 ? `<h3>New Leads (${newLeadItems.length})</h3><ul>${formatItemList(newLeadItems)}</ul>` : ''}
-            <p style="margin-top: 20px;">
-              <a href="${appUrl}/tasks" style="background: #881337; color: white; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">Open Tasks</a>
-            </p>
-          </div>
-        `;
-
-        await sendResendEmailFn(email, `Daily Morning Plan — ${todayStr}`, emailHtml);
-
-        await counterRef.set(
-          { count: (counterDoc.data()?.count || 0) + 1, updatedAt: new Date().toISOString() },
-          { merge: true }
-        );
-      }
-    }
 
     result.sent.push(email);
   }
