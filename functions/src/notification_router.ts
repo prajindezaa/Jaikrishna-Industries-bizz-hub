@@ -351,64 +351,46 @@ export async function routeNotificationIntent(
 
   // Channel C: Email Delivery via Resend (Respecting member preferences, daily cap, and global cap)
   const emailAllowed = EMAIL_ENABLED && prefs?.channels?.email === true;
-  const resendApiKey = process.env.RESEND_API_KEY;
 
-  if (emailAllowed && resendApiKey) {
+  if (emailAllowed) {
     try {
-      const emailCapDoc = await db.collection('system_settings').doc(`email_counter_${todayStrIST}`).get();
-      const globalEmailCount = emailCapDoc.exists ? (emailCapDoc.data()?.count || 0) : 0;
+      const defaultHtml = `
+        <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
+          <h2 style="color: #881337; margin-top: 0;">${intent.title}</h2>
+          <p style="color: #374151; font-size: 14px; line-height: 1.5;">${intent.body}</p>
+          ${
+            intent.deepLink
+              ? `<p style="margin-top: 20px;">
+                  <a href="${(process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '')}${intent.deepLink}"
+                     style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; display: inline-block;">
+                    Open in Jaikrishna Hub
+                  </a>
+                 </p>`
+              : ''
+          }
+          <hr style="border: none; border-top: 1px solid #eee; margin-top: 24px;" />
+          <p style="font-size: 11px; color: #9ca3af; margin: 0;">Jaikrishna Industries Automated Business Hub · Salem, Tamil Nadu</p>
+        </div>
+      `;
 
-      // 80/day cap reserve for safety buffer (free tier limit 100/day)
-      if (globalEmailCount < 80) {
-        const fromEmail = process.env.RESEND_FROM_EMAIL || 'reminders@jaikrishnabizzhub.in';
-        const defaultHtml = `
-          <div style="font-family: sans-serif; max-width: 600px; padding: 20px; border: 1px solid #e5e5e5; border-radius: 8px;">
-            <h2 style="color: #881337; margin-top: 0;">${intent.title}</h2>
-            <p style="color: #374151; font-size: 14px; line-height: 1.5;">${intent.body}</p>
-            ${
-              intent.deepLink
-                ? `<p style="margin-top: 20px;">
-                    <a href="${(process.env.APP_URL || 'https://jaikrishnabizzhub.in').replace(/\/+$/, '')}${intent.deepLink}"
-                       style="background: #881337; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; display: inline-block;">
-                      Open in Jaikrishna Hub
-                    </a>
-                   </p>`
-                : ''
-            }
-            <hr style="border: none; border-top: 1px solid #eee; margin-top: 24px;" />
-            <p style="font-size: 11px; color: #9ca3af; margin: 0;">Jaikrishna Industries Automated Business Hub · Salem, Tamil Nadu</p>
-          </div>
-        `;
+      const { sendEmailWithGuards } = await import('./email_adapter.js');
+      const emailResult = await sendEmailWithGuards(db, {
+        to: recipientEmail,
+        subject: intent.title,
+        html: intent.emailHtml || defaultHtml,
+        isCritical: intent.priority === 'critical',
+        idempotencyKey: intent.dedupeKey,
+        tag: intent.type,
+      });
 
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${resendApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            from: fromEmail,
-            to: [recipientEmail],
-            subject: intent.title,
-            html: intent.emailHtml || defaultHtml,
-          }),
-        });
-
-        if (res.ok) {
-          channelsDelivered.push('email');
-          await db.collection('system_settings').doc(`email_counter_${todayStrIST}`).set(
-            { count: FieldValue.increment(1), updatedAt: FieldValue.serverTimestamp() },
-            { merge: true }
-          );
-        } else {
-          const errText = await res.text();
-          console.warn(`[Router] Resend API responded ${res.status}:`, errText);
-        }
+      if (emailResult.success) {
+        channelsDelivered.push('email');
+        console.log(`[Router] ✓ Channel C EMAIL: Sent successfully to ${recipientEmail} (msgId=${emailResult.messageId})`);
       } else {
-        console.warn(`[Router] Global Resend email cap reached (${globalEmailCount}/80). Skipping email for ${recipientEmail}.`);
+        console.log(`[Router] ⊘ Channel C EMAIL: Suppressed or failed (${emailResult.suppressionReason || emailResult.error})`);
       }
-    } catch (emailErr) {
-      console.error('[Router] Resend email dispatch error:', emailErr);
+    } catch (emailErr: any) {
+      console.error('[Router] Resend email dispatch error:', emailErr?.message || emailErr);
     }
   }
 

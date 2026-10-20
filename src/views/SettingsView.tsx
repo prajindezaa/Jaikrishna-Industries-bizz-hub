@@ -136,6 +136,7 @@ export const SettingsView: React.FC = () => {
               start: prefs.quietHoursStart,
               end: prefs.quietHoursEnd,
             },
+            dailyEmailCap: prefs.dailyEmailCap,
           },
           updatedAt: serverTimestamp(),
         },
@@ -376,6 +377,48 @@ export const SettingsView: React.FC = () => {
                   className="rounded border-stone-300 text-amber-800"
                 />
               </label>
+
+              {/* Email Delivery Options & Cap */}
+              {prefs.emailEnabled && (
+                <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-stone-900">Verified Sending Domain</div>
+                      <div className="text-[11px] text-stone-500 font-mono">jaikrishnabizzhub.in (Resend)</div>
+                    </div>
+                    <span className="text-[10px] font-mono text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      Active / Verified
+                    </span>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-200/50">
+                    <div className="flex items-center justify-between mb-1">
+                      <div>
+                        <div className="font-semibold text-stone-900">Daily Digest Email Limit</div>
+                        <div className="text-[11px] text-stone-500">Max digest emails sent to your inbox per day (0 to 5)</div>
+                      </div>
+                      <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-900">
+                        {prefs.dailyEmailCap} / day
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="5"
+                      step="1"
+                      value={prefs.dailyEmailCap}
+                      onChange={(e) => setPrefs({ ...prefs, dailyEmailCap: parseInt(e.target.value, 10) })}
+                      className="w-full accent-[#881337] cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-stone-400 font-mono">
+                      <span>0 (Mute digests)</span>
+                      <span>3 (Recommended)</span>
+                      <span>5 (Max)</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Quiet Hours Configuration */}
               <div className="pt-3 border-t border-stone-100 space-y-2">
