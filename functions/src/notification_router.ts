@@ -83,32 +83,58 @@ export async function routeNotificationIntent(
   const currentTimeIST = getCurrentTimeIST(now);
   const todayStrIST = getTodayDateIST(now);
 
-  // 1. ATOMIC DEDUPLICATION: Attempt atomic create on notification_log
+  console.log(`[Router] ▶ START routeNotificationIntent for ${recipientEmail} | dedupeKey=${intent.dedupeKey} | bypassQuietHours=${intent.bypassQuietHours} | time=${nowIso}`);
+
+  // 1. ATOMIC DEDUPLICATION: Attempt atomic create on notification_log (bypassed if bypassQuietHours/forceRunNow is set)
   const dedupeDocRef = db.collection('notification_log').doc(intent.dedupeKey);
   try {
-    await dedupeDocRef.create({
-      id: intent.dedupeKey,
-      recipientEmail,
-      title: intent.title,
-      type: intent.type,
-      priority: intent.priority || 'normal',
-      dedupeKey: intent.dedupeKey,
-      status: 'pending',
-      createdAt: nowIso,
-    });
+    if (intent.bypassQuietHours) {
+      await dedupeDocRef.set({
+        id: intent.dedupeKey,
+        recipientEmail,
+        title: intent.title,
+        type: intent.type,
+        priority: intent.priority || 'normal',
+        dedupeKey: intent.dedupeKey,
+        status: 'pending',
+        createdAt: nowIso,
+      });
+    } else {
+      await dedupeDocRef.create({
+        id: intent.dedupeKey,
+        recipientEmail,
+        title: intent.title,
+        type: intent.type,
+        priority: intent.priority || 'normal',
+        dedupeKey: intent.dedupeKey,
+        status: 'pending',
+        createdAt: nowIso,
+      });
+    }
+    console.log(`[Router] ✓ Step 1 DEDUP: ${intent.bypassQuietHours ? '.set() bypass' : '.create() atomic'} succeeded for ${intent.dedupeKey}`);
   } catch (createErr: any) {
     // Code 6 in gRPC / 'ALREADY_EXISTS' in Firestore
     if (createErr?.code === 6 || String(createErr?.message).includes('ALREADY_EXISTS') || String(createErr).includes('already exists')) {
-      console.log(`[Router] Intent ${intent.dedupeKey} suppressed: Duplicate delivery.`);
-      return { accepted: false, suppressionReason: 'dedupe_duplicate', channelsDelivered: [] };
+      if (!intent.bypassQuietHours) {
+        console.log(`[Router] ✗ Intent ${intent.dedupeKey} suppressed: Duplicate delivery.`);
+        return { accepted: false, suppressionReason: 'dedupe_duplicate', channelsDelivered: [] };
+      }
+      console.log(`[Router] ⚠ Dedup doc already existed but bypassQuietHours=true, continuing...`);
+    } else {
+      console.warn(`[Router] ⚠ Atomic dedupe unexpected error (code=${createErr?.code}): ${createErr?.message}`);
     }
-    console.warn(`[Router] Atomic dedupe check error: ${createErr?.message}`);
   }
 
-  // 2. Fetch Member Preferences & Snooze State
-  const memberDoc = await db.collection('team_members').doc(recipientEmail).get();
+  // 2. Fetch Member Preferences & Snooze State (use sanitized doc ID: @ and . replaced with _)
+  const sanitizedDocId = recipientEmail.replace(/[@.]/g, '_');
+  let memberDoc = await db.collection('team_members').doc(sanitizedDocId).get();
+  // Fallback: try raw email as doc ID for legacy data
+  if (!memberDoc.exists) {
+    memberDoc = await db.collection('team_members').doc(recipientEmail).get();
+  }
   const memberData = memberDoc.exists ? memberDoc.data() : null;
   const prefs = memberData?.notificationPreferences;
+  console.log(`[Router] ✓ Step 2 PREFS: memberDoc found=${memberDoc.exists} (tried ${sanitizedDocId}) | prefs=${prefs ? JSON.stringify({channels: prefs.channels, snooze: prefs.snoozeUntil, quietHours: prefs.quietHours?.enabled}) : 'none'}`);
 
   // 3. Check Snooze
   if (prefs?.snoozeUntil) {
@@ -182,9 +208,11 @@ export async function routeNotificationIntent(
 
   // 8. Deliver to Active Channels
   const channelsDelivered: string[] = [];
+  console.log(`[Router] ▶ Step 8 CHANNELS: Starting delivery for ${recipientEmail} | inApp=${prefs?.channels?.inApp} push=${prefs?.channels?.push} email=${prefs?.channels?.email}`);
 
   // Channel A: In-App Notification (Stored with deep link & priority)
   const inAppAllowed = prefs?.channels?.inApp !== false;
+  console.log(`[Router] Channel A IN-APP: allowed=${inAppAllowed} (prefs.channels.inApp=${prefs?.channels?.inApp})`);
   if (inAppAllowed) {
     try {
       const notifRef = db.collection('notifications').doc();
@@ -201,43 +229,68 @@ export async function routeNotificationIntent(
         createdAt: nowIso,
       });
       channelsDelivered.push('in_app');
-    } catch (inAppErr) {
-      console.error('[Router] Failed to write in-app notification:', inAppErr);
+      console.log(`[Router] ✓ Channel A IN-APP: Written successfully! docId=${notifRef.id} recipientEmail=${recipientEmail}`);
+    } catch (inAppErr: any) {
+      console.error(`[Router] ✗ Channel A IN-APP FAILED: ${inAppErr?.message}`, inAppErr);
     }
+  } else {
+    console.log(`[Router] ⊘ Channel A IN-APP: Skipped (disabled by member prefs)`);
   }
 
   // Channel B: Push Notification via FCM (With dead-token auto cleanup & TTL)
   const pushAllowed = prefs?.channels?.push !== false;
+  console.log(`[Router] Channel B PUSH: allowed=${pushAllowed} (prefs.channels.push=${prefs?.channels?.push})`);
   if (pushAllowed) {
     try {
       // Query devices from both `members/{email}/devices` and `team_members/{email}/devices`
+      console.log(`[Router] Channel B PUSH: Querying members/${recipientEmail}/devices where active==true...`);
       let devicesSnap = await db
         .collection('members')
         .doc(recipientEmail)
         .collection('devices')
         .where('active', '==', true)
         .get()
-        .catch(() => ({ docs: [] as any[] }));
+        .catch((e: any) => { console.warn(`[Router] members devices query failed: ${e?.message}`); return { docs: [] as any[] }; });
+
+      console.log(`[Router] Channel B PUSH: members/${recipientEmail}/devices found ${devicesSnap.docs?.length || 0} device(s)`);
 
       if (!devicesSnap.docs || devicesSnap.docs.length === 0) {
+        console.log(`[Router] Channel B PUSH: Falling back to team_members/${sanitizedDocId}/devices...`);
+        devicesSnap = await db
+          .collection('team_members')
+          .doc(sanitizedDocId)
+          .collection('devices')
+          .where('active', '==', true)
+          .get()
+          .catch((e: any) => { console.warn(`[Router] team_members devices query failed: ${e?.message}`); return { docs: [] as any[] }; });
+        console.log(`[Router] Channel B PUSH: team_members/${sanitizedDocId}/devices found ${devicesSnap.docs?.length || 0} device(s)`);
+      }
+
+      // Also try team_members with raw email as fallback
+      if (!devicesSnap.docs || devicesSnap.docs.length === 0) {
+        console.log(`[Router] Channel B PUSH: Trying team_members/${recipientEmail}/devices (raw email)...`);
         devicesSnap = await db
           .collection('team_members')
           .doc(recipientEmail)
           .collection('devices')
           .where('active', '==', true)
           .get()
-          .catch(() => ({ docs: [] as any[] }));
+          .catch((e: any) => { console.warn(`[Router] team_members raw email devices query failed: ${e?.message}`); return { docs: [] as any[] }; });
+        console.log(`[Router] Channel B PUSH: team_members/${recipientEmail}/devices found ${devicesSnap.docs?.length || 0} device(s)`);
       }
 
       const devices = (devicesSnap.docs || [])
         .map((d: any) => ({ id: d.id, token: d.data()?.token }))
         .filter((d: any) => Boolean(d.token));
 
+      console.log(`[Router] Channel B PUSH: ${devices.length} device(s) with valid tokens for ${recipientEmail}`);
+
       if (devices.length > 0) {
         const messaging = admin.messaging();
+        let pushSuccessCount = 0;
         for (const dev of devices) {
           try {
-            await messaging.send({
+            const sendResult = await messaging.send({
               token: dev.token,
               notification: {
                 title: intent.title,
@@ -253,15 +306,17 @@ export async function routeNotificationIntent(
               webpush: {
                 headers: {
                   Urgency: intent.priority === 'critical' || intent.priority === 'high' ? 'high' : 'normal',
-                  TTL: '86400', // 24-hour expiration prevents ancient notification storms on wake
+                  TTL: '86400',
                 },
                 fcmOptions: {
                   link: intent.deepLink || '/',
                 },
               },
             });
+            pushSuccessCount++;
+            console.log(`[Router] ✓ Channel B PUSH: Sent successfully to device ${dev.id} | FCM messageId=${sendResult}`);
           } catch (pushErr: any) {
-            console.warn(`[Router] Push to token failed:`, pushErr?.message);
+            console.warn(`[Router] ✗ Channel B PUSH: Failed for device ${dev.id}: code=${pushErr?.code} msg=${pushErr?.message}`);
             // Automatic Dead-Token Pruning
             if (
               pushErr?.code === 'messaging/registration-token-not-registered' ||
@@ -279,11 +334,17 @@ export async function routeNotificationIntent(
             }
           }
         }
-        channelsDelivered.push('push');
+        if (pushSuccessCount > 0) {
+          channelsDelivered.push('push');
+        }
+      } else {
+        console.log(`[Router] ⊘ Channel B PUSH: No registered devices with active tokens for ${recipientEmail}. Push skipped.`);
       }
-    } catch (pushBatchErr) {
-      console.error('[Router] Push dispatch error:', pushBatchErr);
+    } catch (pushBatchErr: any) {
+      console.error(`[Router] ✗ Channel B PUSH: Batch dispatch error: ${pushBatchErr?.message}`, pushBatchErr);
     }
+  } else {
+    console.log(`[Router] ⊘ Channel B PUSH: Skipped (disabled by member prefs)`);
   }
 
   // Channel C: Email Delivery via Resend (Respecting member preferences, daily cap, and global cap)
@@ -358,6 +419,8 @@ export async function routeNotificationIntent(
 
   // 9. Update Audit Log Record
   await logNotificationOutcome(db, intent, 'delivered', channelsDelivered);
+
+  console.log(`[Router] ✅ DONE for ${recipientEmail} | dedupeKey=${intent.dedupeKey} | channelsDelivered=[${channelsDelivered.join(', ')}]`);
 
   return {
     accepted: true,

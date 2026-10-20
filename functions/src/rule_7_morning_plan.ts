@@ -247,7 +247,8 @@ export async function executeRule7MorningPlan(
     }
 
     // Dispatch via centralized Notification Router (handles In-App bell, FCM Push, quiet hours, snooze)
-    await routeNotificationIntent(db, {
+    console.log(`[Rule 7] ▶ Dispatching notification for ${email} via routeNotificationIntent (bypassQuietHours=${Boolean(options?.forceRunNow)})...`);
+    const routerResult = await routeNotificationIntent(db, {
       recipientEmail: email,
       title: `Good Morning! Daily Plan — ${todayStr}`,
       body: totalCount > 0 
@@ -259,6 +260,7 @@ export async function executeRule7MorningPlan(
       dedupeKey: `morning_plan_${email}_${todayStr}`,
       bypassQuietHours: Boolean(options?.forceRunNow),
     });
+    console.log(`[Rule 7] ✓ routeNotificationIntent returned: accepted=${routerResult.accepted} | channels=[${routerResult.channelsDelivered.join(', ')}] | suppression=${routerResult.suppressionReason || 'none'}`);
 
     // Record deduplication receipt after dispatch
     await dedupeRef.set({
@@ -267,6 +269,11 @@ export async function executeRule7MorningPlan(
       date: todayStr,
       scheduledTime: chosenTime,
       totalCount,
+      routerResult: {
+        accepted: routerResult.accepted,
+        channelsDelivered: routerResult.channelsDelivered,
+        suppressionReason: routerResult.suppressionReason || null,
+      },
     });
 
     // Email delivery (Respects global daily cap, falls back to Push & In-App on cap hit)
