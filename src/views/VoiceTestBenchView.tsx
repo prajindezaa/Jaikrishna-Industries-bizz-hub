@@ -22,6 +22,7 @@ import {
   Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { micService } from '../services/microphoneService';
 
 interface TestScriptItem {
   id: number;
@@ -154,56 +155,34 @@ export const VoiceTestBenchView: React.FC = () => {
     rec.start();
   };
 
-  // 3. MediaRecorder -> Server Gemini Audio
+  // 3. Central micService -> Server Gemini Audio
   const handleToggleRecord = async () => {
     if (isRecording) {
-      // Stop recording
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
       setIsRecording(false);
+      const res = await micService.stopCapture();
+      if (!res || !res.blob) return;
+
+      setRecordingTimingMs(res.durationMs);
+
+      // Convert to base64
+      const reader = new FileReader();
+      reader.readAsDataURL(res.blob);
+      reader.onloadend = async () => {
+        const base64Audio = (reader.result as string).split(',')[1];
+        await sendAudioToServer(base64Audio, res.mimeType);
+      };
     } else {
-      // Start recording
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioChunksRef.current = [];
+      setGeminiResult(null);
+      const started = await micService.startCapture({
+        maxDurationSeconds: 30,
+        onError: (err) => {
+          alert(`Mic access error: ${err.message || String(err)}`);
+          setIsRecording(false);
+        },
+      });
 
-        // Check supported MIME type
-        let mimeType = 'audio/webm';
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
-        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
-
-        const recorder = new MediaRecorder(stream, { mimeType });
-        mediaRecorderRef.current = recorder;
-
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-
-        const recStartTime = Date.now();
-
-        recorder.onstop = async () => {
-          const recDuration = Date.now() - recStartTime;
-          setRecordingTimingMs(recDuration);
-
-          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-          // Stop stream tracks
-          stream.getTracks().forEach((t) => t.stop());
-
-          // Convert to base64
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = async () => {
-            const base64Audio = (reader.result as string).split(',')[1];
-            await sendAudioToServer(base64Audio, mimeType);
-          };
-        };
-
-        recorder.start();
+      if (started) {
         setIsRecording(true);
-        setGeminiResult(null);
-      } catch (err: any) {
-        alert(`Mic access error: ${err.message || String(err)}`);
       }
     }
   };

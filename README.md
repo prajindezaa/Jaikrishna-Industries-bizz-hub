@@ -81,10 +81,13 @@ The AI Assistant operates under a strict **Propose-Then-Confirm** model. It has 
 * Voice recordings are processed in memory and **never saved to disk or stored in Firestore**.
 * Customer data is never used to train public AI models.
 
-### Troubleshooting Voice:
-* **Android Chrome / PC Chrome**: Use either browser dictation or the Gemini audio path.
-* **No Tamil Voice on Device**: If the device lacks a Tamil voice pack (`ta-IN`), the assistant displays text on screen rather than mispronouncing Tamil with an English voice.
-* **Voice Confirmation**: Spoken confirmation (`Confirm`, `சரி`, `ஆமா`) is accepted only during the 5-second window after speech finishes for low-risk actions. High-risk actions require a physical tap on the confirmation card.
+### Microphone Permission & Audio Capture System:
+* **Central Service (`src/services/microphoneService.ts`)**: Single authoritative module for `getUserMedia` streams, permission state tracking, AnalyserNode audio meter, and safe track cleanup on cancel, route change, blur, or background.
+* **Permissions-Policy**: Configured on Vercel as `camera=(), microphone=(self), geolocation=(), payment=()`, guaranteeing that only the canonical domain `jaikrishnabizzhub.in` can access the audio stream.
+* **Educational Explanation Modal**: Displays first-use sheet explaining why the mic is needed, zero permanent storage, Gemini processing, and 7-day snooze for "Not now".
+* **Recovery Guidance**: Platform-detected step-by-step unblock instructions for Desktop Chrome/Edge, Android Chrome & OS app permissions, and iPhone Safari / Home Screen PWA. Includes a "Check again" live verification button.
+* **Audio Track Release & Safety**: Guaranteed track closure on all exit paths, countdown timer (default 60s), and level meter visualization so the microphone is never open silently.
+* **Settings & Diagnostics**: Available in `SettingsView` with live input device selector, 3-second local loopback test (100% in-memory, never uploaded), and complete hardware report with "Copy diagnostics" button.
 
 ---
 

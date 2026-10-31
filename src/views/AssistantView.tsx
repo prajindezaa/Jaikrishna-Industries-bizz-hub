@@ -24,6 +24,9 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
 import { ActionConfirmationCard } from '../components/assistant/ActionConfirmationCard';
+import { micService, MicPermissionState } from '../services/microphoneService';
+import { MicrophoneExplanationModal } from '../components/voice/MicrophoneExplanationModal';
+import { MicrophoneRecoveryModal } from '../components/voice/MicrophoneRecoveryModal';
 
 interface Message {
   id: string;
@@ -76,72 +79,84 @@ export const AssistantView: React.FC = () => {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [speechLang, setSpeechLang] = useState<'ta-IN' | 'en-IN'>('en-IN');
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
-  const [micPermState, setMicPermState] = useState<'prompt' | 'granted' | 'denied' | 'unknown'>('prompt');
-  const [showPermissionModal, setShowPermissionModal] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const activeRecognitionRef = useRef<any>(null);
+  const [micPermState, setMicPermState] = useState<MicPermissionState>(micService.getPermissionState());
+  const [showExplanationModal, setShowExplanationModal] = useState(false);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  const [activeSpeechRec, setActiveSpeechRec] = useState<any>(null);
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [countdownRemaining, setCountdownRemaining] = useState<number>(60);
+  const countdownTimerRef = useRef<any>(null);
 
-  // Check microphone permission status on mount
+  // Subscribe to central micService
   useEffect(() => {
-    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
-      navigator.permissions
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .query({ name: 'microphone' as any })
-        .then((perm) => {
-          setMicPermState(perm.state as 'prompt' | 'granted' | 'denied');
-          perm.onchange = () => {
-            setMicPermState(perm.state as 'prompt' | 'granted' | 'denied');
-            if (perm.state === 'granted') {
-              setShowPermissionModal(false);
-              setVoiceError(null);
-            }
-          };
-        })
-        .catch(() => {
-          setMicPermState('unknown');
-        });
-    }
+    const unsub = micService.subscribeState((st) => {
+      setMicPermState(st);
+      if (st === 'granted') {
+        setShowRecoveryModal(false);
+        setVoiceError(null);
+      } else if (st === 'blocked' || st === 'denied') {
+        setShowRecoveryModal(true);
+      }
+    });
+    return () => {
+      unsub();
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    };
   }, []);
 
-  // Voice Input via Web Speech API with MediaRecorder Fallback
+  // Voice toggle: Checks in-app explanation snooze before prompting
   const handleToggleVoice = async () => {
     setVoiceError(null);
 
-    // If currently listening, stop it cleanly
+    // If already listening, stop capture immediately
     if (isListening) {
-      if (activeRecognitionRef.current) {
+      if (activeSpeechRec) {
         try {
-          activeRecognitionRef.current.stop();
+          activeSpeechRec.stop();
         } catch {
           // ignore
         }
+        setActiveSpeechRec(null);
       }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
+      await micService.stopCapture();
       setIsListening(false);
+      setAudioLevel(0);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       return;
     }
 
+    // First use check: If permission not granted and not snoozed, show educational modal first
+    const hasSeenExplanation = localStorage.getItem('jaikrishna_mic_explanation_seen') === 'true';
+    if (!hasSeenExplanation && !micService.isSnoozed() && micPermState !== 'granted') {
+      setShowExplanationModal(true);
+      return;
+    }
+
+    await proceedWithVoiceCapture();
+  };
+
+  // Execution after user confirms or when already permitted
+  const proceedWithVoiceCapture = async () => {
+    setShowExplanationModal(false);
+
+    // Try Web Speech API first if supported
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const win = window as any;
     const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
 
-    // Check if Web Speech API is supported
     if (SpeechRecognitionClass) {
       try {
         const recognition = new SpeechRecognitionClass();
-        activeRecognitionRef.current = recognition;
+        setActiveSpeechRec(recognition);
         recognition.lang = speechLang;
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
         recognition.onstart = () => {
           setIsListening(true);
-          setShowPermissionModal(false);
+          setShowRecoveryModal(false);
           setVoiceError(null);
-          setMicPermState('granted');
+          startCountdownTimer();
         };
 
         recognition.onresult = (event: any) => {
@@ -162,142 +177,120 @@ export const AssistantView: React.FC = () => {
           }
         };
 
-        recognition.onerror = async (event: any) => {
+        recognition.onerror = (event: any) => {
           console.warn('Speech recognition error event:', event.error);
           setIsListening(false);
+          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
           if (event.error === 'not-allowed') {
-            // Permission was denied or blocked
-            setMicPermState('denied');
-            setShowPermissionModal(true);
-            setVoiceError('Microphone permission is blocked. Please allow microphone access.');
-          } else if (event.error === 'no-speech') {
-            // Normal timeout when nothing was spoken
+            setShowRecoveryModal(true);
+            setVoiceError('Microphone permission blocked. Follow the steps to enable it.');
           } else if (event.error === 'network') {
-            setVoiceError('Speech network error. Falling back to Gemini server audio...');
-            startGeminiAudioFallback();
-          } else {
-            setVoiceError(`Voice error: ${event.error || 'Stopped listening'}`);
+            setVoiceError('Speech network error. Switching to server audio capture...');
+            startCentralServiceAudioCapture();
+          } else if (event.error !== 'no-speech') {
+            setVoiceError(`Voice event: ${event.error}`);
           }
         };
 
         recognition.onend = () => {
           setIsListening(false);
-          activeRecognitionRef.current = null;
+          setActiveSpeechRec(null);
+          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
         };
 
         recognition.start();
         return;
-      } catch (err: any) {
-        console.warn('SpeechRecognition failed to start, falling back to MediaRecorder:', err);
+      } catch (err) {
+        console.warn('SpeechRecognition failed, falling back to central micService:', err);
       }
     }
 
-    // Fallback: If Web Speech API is not supported, use MediaRecorder + Gemini
-    startGeminiAudioFallback();
+    // Fallback: Use Central Microphone Service MediaRecorder + Gemini
+    startCentralServiceAudioCapture();
   };
 
-  // Explicitly prompt user via getUserMedia
-  const triggerMediaPrompt = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setVoiceError('Microphone is not supported in this browser environment.');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // If granted, close tracks and start speech recognition
-      stream.getTracks().forEach((t) => t.stop());
-      setMicPermState('granted');
-      setShowPermissionModal(false);
-      setVoiceError(null);
-      // Now start listening immediately
-      handleToggleVoice();
-    } catch (err: any) {
-      console.warn('UserMedia request error:', err);
-      setMicPermState('denied');
-      setShowPermissionModal(true);
-      setVoiceError('Microphone permission is blocked in your browser settings.');
-    }
-  };
-
-  // Fallback audio recorder using browser MediaRecorder and /api/assistant/voice-test
-  const startGeminiAudioFallback = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setVoiceError('Audio recording is not supported in this browser. Please use Chrome or Edge.');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-
-      let mimeType = 'audio/webm';
-      if (typeof MediaRecorder !== 'undefined') {
-        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
-        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
-      }
-
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        if (audioBlob.size === 0) return;
-
-        setIsTranscribingAudio(true);
-        try {
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            const base64Audio = (reader.result as string).split(',')[1];
-            const token = user ? await user.getIdToken() : '';
-            const res = await fetch('/api/assistant/voice-test', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: token ? `Bearer ${token}` : '',
-              },
-              body: JSON.stringify({
-                audioBase64: base64Audio,
-                mimeType,
-                expectedCategory: speechLang === 'ta-IN' ? 'Tamil' : 'English',
-              }),
-            });
-
-            const data = await res.json();
-            if (data.success && data.transcript) {
-              setInput(data.transcript);
-            } else if (data.error) {
-              setVoiceError(data.error);
-            }
-            setIsTranscribingAudio(false);
-          };
-          reader.readAsDataURL(audioBlob);
-        } catch (err: any) {
-          setVoiceError('Failed to transcribe audio via Gemini: ' + (err.message || String(err)));
-          setIsTranscribingAudio(false);
+  const startCountdownTimer = () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    setCountdownRemaining(60);
+    countdownTimerRef.current = setInterval(() => {
+      setCountdownRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(countdownTimerRef.current);
+          handleToggleVoice();
+          return 0;
         }
-      };
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
-      recorder.start();
+  const startCentralServiceAudioCapture = async () => {
+    const started = await micService.startCapture({
+      maxDurationSeconds: 60,
+      onLevelChange: (lvl) => setAudioLevel(lvl),
+      onTimeout: () => {
+        handleToggleVoice();
+      },
+      onError: (err, st) => {
+        setIsListening(false);
+        if (st === 'blocked' || st === 'denied') {
+          setShowRecoveryModal(true);
+        } else {
+          setVoiceError(`Microphone error: ${err.message || st}`);
+        }
+      },
+    });
+
+    if (started) {
       setIsListening(true);
-      setVoiceError(null);
-      setMicPermState('granted');
-      setShowPermissionModal(false);
-    } catch (err: any) {
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMicPermState('denied');
-        setShowPermissionModal(true);
-        setVoiceError('Microphone permission was denied.');
-      } else {
-        setVoiceError('Failed to start microphone: ' + (err.message || String(err)));
-      }
+      startCountdownTimer();
+    } else {
       setIsListening(false);
+      setShowRecoveryModal(true);
+    }
+  };
+
+  // Called when recording finishes to send audio to server if using MediaRecorder
+  const finishCentralAudioCapture = async () => {
+    const result = await micService.stopCapture();
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    setIsListening(false);
+    setAudioLevel(0);
+
+    if (!result || !result.blob || result.blob.size === 0) return;
+
+    setIsTranscribingAudio(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Audio = (reader.result as string).split(',')[1];
+        const token = user ? await user.getIdToken() : '';
+        const res = await fetch('/api/assistant/voice-test', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            audioBase64: base64Audio,
+            mimeType: result.mimeType,
+            expectedCategory: speechLang === 'ta-IN' ? 'Tamil' : 'English',
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success && data.transcript) {
+          setInput(data.transcript);
+        } else if (data.error) {
+          setVoiceError(data.error);
+        }
+        setIsTranscribingAudio(false);
+      };
+      reader.readAsDataURL(result.blob);
+    } catch (err: any) {
+      setVoiceError('Failed to transcribe audio: ' + (err.message || String(err)));
+      setIsTranscribingAudio(false);
     }
   };
 
@@ -759,6 +752,37 @@ export const AssistantView: React.FC = () => {
         </div>
       )}
 
+      {/* Live Active Recording Indicator with Audio Meter and Countdown */}
+      {isListening && (
+        <div className="px-4 py-2 bg-rose-50 border-t border-rose-200 flex items-center justify-between text-xs animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
+            <span className="font-bold text-rose-900">
+              Listening ({countdownRemaining}s remaining)
+            </span>
+            <span className="text-stone-500 text-[11px]">
+              Tap mic or red button to finish
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="w-24 h-2 bg-stone-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-rose-600 transition-all duration-75"
+                style={{ width: `${Math.max(10, Math.min(100, audioLevel * 100))}%` }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleToggleVoice}
+              className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold text-[10px] hover:bg-rose-700 transition-colors"
+            >
+              Done Speaking
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input Bar with Voice Input */}
       <div className="p-3 border-t border-stone-200 bg-white">
         <form
@@ -791,7 +815,7 @@ export const AssistantView: React.FC = () => {
             }`}
             title={
               isListening
-                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}... click to stop`
+                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'} (${countdownRemaining}s left)... click to stop`
                 : isTranscribingAudio
                 ? 'Transcribing audio via Gemini...'
                 : `Click to speak in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}`
@@ -811,7 +835,7 @@ export const AssistantView: React.FC = () => {
             type="text"
             placeholder={
               isListening
-                ? `Listening to your voice in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}...`
+                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'} (${countdownRemaining}s)... speak naturally`
                 : isTranscribingAudio
                 ? 'Processing voice with Gemini audio understanding...'
                 : 'Ask Gemini about leads, orders, schedules, or team settings (Enter to send)...'
@@ -833,60 +857,31 @@ export const AssistantView: React.FC = () => {
         </form>
       </div>
 
-      {/* Microphone Permission Help / Request Modal */}
-      {showPermissionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-rose-50 text-[#881337] flex items-center justify-center shrink-0">
-                <Mic className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-stone-900">Microphone Permission</h3>
-                <p className="text-xs text-stone-500">Allow microphone to speak to Gemini</p>
-              </div>
-            </div>
+      {/* First-Use Educational Explanation Modal */}
+      <MicrophoneExplanationModal
+        isOpen={showExplanationModal}
+        onAllow={async () => {
+          localStorage.setItem('jaikrishna_mic_explanation_seen', 'true');
+          micService.clearSnooze();
+          setShowExplanationModal(false);
+          await proceedWithVoiceCapture();
+        }}
+        onNotNow={() => {
+          micService.setSnooze(7);
+          setShowExplanationModal(false);
+        }}
+      />
 
-            <p className="text-xs text-stone-600 mb-4 leading-relaxed">
-              When prompted by your browser, tap <strong className="text-stone-900">"Allow"</strong> so the AI Assistant can listen to your Tamil or English voice commands.
-            </p>
-
-            <div className="bg-stone-50 rounded-xl p-3 mb-4 text-[11px] text-stone-600 border border-stone-200 space-y-1.5">
-              <div className="font-semibold text-stone-700">How to allow microphone in your browser:</div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-4 h-4 rounded-full bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-[10px] shrink-0">1</span>
-                <span>Click the <strong>tune / lock icon 🔒</strong> in your browser address bar (top-left).</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-4 h-4 rounded-full bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-[10px] shrink-0">2</span>
-                <span>Change <strong>Microphone</strong> from <em>Block</em> to <strong>Allow</strong>.</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-4 h-4 rounded-full bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-[10px] shrink-0">3</span>
-                <span>Click <strong>"Request Permission Prompt"</strong> below.</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowPermissionModal(false)}
-                className="px-3 py-2 rounded-xl text-xs font-medium text-stone-600 hover:bg-stone-100 transition-colors"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={() => triggerMediaPrompt()}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#881337] text-white hover:bg-[#70102e] shadow-xs transition-colors flex items-center gap-1.5"
-              >
-                <Mic className="w-3.5 h-3.5" />
-                <span>Request Permission Prompt</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Platform-Specific Recovery Guidance Modal */}
+      <MicrophoneRecoveryModal
+        isOpen={showRecoveryModal}
+        state={micPermState}
+        onClose={() => setShowRecoveryModal(false)}
+        onPermissionGranted={() => {
+          setShowRecoveryModal(false);
+          proceedWithVoiceCapture();
+        }}
+      />
     </div>
   );
 };
