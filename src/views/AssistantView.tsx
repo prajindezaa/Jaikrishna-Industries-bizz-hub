@@ -76,9 +76,36 @@ export const AssistantView: React.FC = () => {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [speechLang, setSpeechLang] = useState<'ta-IN' | 'en-IN'>('en-IN');
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const activeRecognitionRef = useRef<any>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+
+  // Request mic permission from user with allow/deny browser prompt
+  const requestMicPermission = async (): Promise<boolean> => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setVoiceError('Microphone is not supported in this browser. Please use Chrome or Edge.');
+      return false;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      setShowPermissionModal(false);
+      setVoiceError(null);
+      return true;
+    } catch (err: any) {
+      console.warn('getUserMedia error:', err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setShowPermissionModal(true);
+        setVoiceError('Microphone permission was denied. Click "Allow Access" or enable it in browser settings.');
+      } else {
+        setVoiceError('Could not access microphone: ' + (err.message || String(err)));
+      }
+      return false;
+    }
+  };
 
   // Voice Input via Web Speech API with MediaRecorder Fallback
   const handleToggleVoice = async () => {
@@ -96,7 +123,17 @@ export const AssistantView: React.FC = () => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop());
+        audioStreamRef.current = null;
+      }
       setIsListening(false);
+      return;
+    }
+
+    // Step 1: Explicitly ask browser for Microphone permission (shows Allow / Block prompt)
+    const hasPermission = await requestMicPermission();
+    if (!hasPermission) {
       return;
     }
 
@@ -104,23 +141,9 @@ export const AssistantView: React.FC = () => {
     const win = window as any;
     const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
 
-    // Check if Web Speech API is supported
+    // Step 2: Try Web Speech API if supported
     if (SpeechRecognitionClass) {
       try {
-        // Request microphone permission explicitly first so Chrome/Edge doesn't silently reject
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            // Release the stream immediately since SpeechRecognition opens its own capture
-            stream.getTracks().forEach((track) => track.stop());
-          } catch (permErr: any) {
-            if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
-              setVoiceError('Microphone access was denied. Please allow microphone permissions in your browser URL bar / site settings.');
-              return;
-            }
-          }
-        }
-
         const recognition = new SpeechRecognitionClass();
         activeRecognitionRef.current = recognition;
         recognition.lang = speechLang;
@@ -153,16 +176,16 @@ export const AssistantView: React.FC = () => {
         recognition.onerror = (event: any) => {
           console.warn('Speech recognition error event:', event.error);
           if (event.error === 'not-allowed') {
-            setVoiceError('Microphone blocked. Please tap the lock/tune icon near your browser address bar to allow microphone.');
+            setShowPermissionModal(true);
+            setVoiceError('Microphone blocked. Please tap the lock icon in your address bar and switch Microphone to "Allow".');
           } else if (event.error === 'no-speech') {
             // normal timeout if user spoke nothing
           } else if (event.error === 'network') {
-            setVoiceError('Speech network error. Falling back to Gemini server audio...');
-            // Fallback to Gemini server recording
+            setVoiceError('Speech network error. Falling back to server audio...');
             startGeminiAudioFallback();
             return;
           } else {
-            setVoiceError(`Voice error: ${event.error || 'Failed to capture voice'}`);
+            setVoiceError(`Voice notice: ${event.error || 'Stopped listening'}`);
           }
           setIsListening(false);
         };
@@ -175,25 +198,24 @@ export const AssistantView: React.FC = () => {
         recognition.start();
         return;
       } catch (err: any) {
-        console.warn('SpeechRecognition init failed, falling back to Gemini audio recorder:', err);
+        console.warn('SpeechRecognition failed, using fallback:', err);
       }
     }
 
-    // Fallback: If Web Speech API is not supported or failed to start, use MediaRecorder + Gemini
+    // Step 3: Fallback using stream and MediaRecorder
     startGeminiAudioFallback();
   };
 
   // Fallback audio recorder using browser MediaRecorder and /api/assistant/voice-test
   const startGeminiAudioFallback = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setVoiceError('Audio recording is not supported in this browser environment. Please use Google Chrome or Microsoft Edge.');
-      return;
-    }
-
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
+      let stream = audioStreamRef.current;
+      if (!stream || stream.getTracks().every((t) => t.readyState === 'ended')) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStreamRef.current = stream;
+      }
 
+      audioChunksRef.current = [];
       let mimeType = 'audio/webm';
       if (typeof MediaRecorder !== 'undefined') {
         if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
@@ -208,7 +230,10 @@ export const AssistantView: React.FC = () => {
       };
 
       recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((track) => track.stop());
+          audioStreamRef.current = null;
+        }
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (audioBlob.size === 0) return;
 
@@ -251,7 +276,8 @@ export const AssistantView: React.FC = () => {
       setVoiceError(null);
     } catch (err: any) {
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setVoiceError('Microphone permission was denied. Please allow microphone access in site settings.');
+        setShowPermissionModal(true);
+        setVoiceError('Microphone permission was denied.');
       } else {
         setVoiceError('Failed to start microphone: ' + (err.message || String(err)));
       }
@@ -790,6 +816,55 @@ export const AssistantView: React.FC = () => {
           </button>
         </form>
       </div>
+
+      {/* Microphone Permission Help / Request Modal */}
+      {showPermissionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 text-[#881337] flex items-center justify-center shrink-0">
+                <Mic className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-stone-900">Microphone Permission</h3>
+                <p className="text-xs text-stone-500">Allow microphone to speak to Gemini</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-600 mb-4 leading-relaxed">
+              When prompted by your browser, tap <strong className="text-stone-900">"Allow"</strong> so the AI Assistant can listen to your Tamil or English voice commands.
+            </p>
+
+            <div className="bg-stone-50 rounded-xl p-3 mb-4 text-[11px] text-stone-600 border border-stone-200 space-y-1.5">
+              <div className="font-semibold text-stone-700">If you accidentally clicked "Block":</div>
+              <div>1. Tap the <strong>lock / tune icon</strong> in your browser address bar.</div>
+              <div>2. Toggle <strong>Microphone</strong> to <strong>Allow</strong>.</div>
+              <div>3. Refresh the page or tap "Try Again" below.</div>
+            </div>
+
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowPermissionModal(false)}
+                className="px-3 py-2 rounded-xl text-xs font-medium text-stone-600 hover:bg-stone-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowPermissionModal(false);
+                  await handleToggleVoice();
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#881337] text-white hover:bg-[#70102e] shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span>Ask / Allow Access</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
