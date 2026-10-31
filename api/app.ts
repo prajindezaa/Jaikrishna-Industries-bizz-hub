@@ -1054,12 +1054,13 @@ app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: Authen
     });
   } catch (err: unknown) {
     console.error('Gemini Assistant Propose Error:', err);
+    const errDetail = (err as any)?.message || String(err);
     const smartReply = getSmartAssistantFallback(message, context);
     res.json({
       success: true,
       modelUsed: 'Offline Rule-Based Engine (Gemini Fallback)',
       isAiGenerated: false,
-      reply: `[System Notice: Gemini API was unavailable or timed out; answered via Offline Business Rules]\n\n${smartReply}`,
+      reply: `[System Notice: Gemini API was unavailable (${errDetail}); answered via Offline Business Rules]\n\n${smartReply}`,
       hasProposal: false,
     });
   }

@@ -382,7 +382,10 @@ export async function handleAssistantTurn(
 
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey });
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const configuredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const candidateModels = [configuredModel, 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  // Deduplicate
+  const modelList = Array.from(new Set(candidateModels));
 
   const systemInstruction = `You are the executive AI Business Assistant for Jaikrishna Industries, Salem, Tamil Nadu (manufacturing pure Bhimseni camphor, camphor tablets, premium agarbatti, Deepam lamp oil, pure sambrani cups, and traditional rose water).
   
@@ -418,14 +421,29 @@ CRITICAL OPERATIONAL INVARIANTS:
 
   // Max tool execution turns to prevent loops
   for (let turn = 0; turn < HARD_LIMITS.MAX_TOOL_CALLS_PER_TURN; turn++) {
-    const response: any = await ai.models.generateContent({
-      model: modelName,
-      contents: conversationContents,
-      config: {
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-        tools: toolsFormatted as any,
-      },
-    });
+    let response: any = null;
+    let lastGenError: any = null;
+
+    for (const m of modelList) {
+      try {
+        response = await ai.models.generateContent({
+          model: m,
+          contents: conversationContents,
+          config: {
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            tools: toolsFormatted as any,
+          },
+        });
+        if (response) break;
+      } catch (err: any) {
+        lastGenError = err;
+        console.warn(`[proposeEngine] Model ${m} attempt failed:`, err?.message || err);
+      }
+    }
+
+    if (!response) {
+      throw lastGenError || new Error('All candidate Gemini models failed to respond.');
+    }
 
     const candidate = response?.candidates?.[0];
     const functionCalls = candidate?.content?.parts?.filter((p: any) => p.functionCall);
