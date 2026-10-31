@@ -73,49 +73,188 @@ export const AssistantView: React.FC = () => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
 
-  // Voice Input via Web Speech API
-  const handleToggleVoice = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = window as any;
-    const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [speechLang, setSpeechLang] = useState<'ta-IN' | 'en-IN'>('en-IN');
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const activeRecognitionRef = useRef<any>(null);
 
-    if (!SpeechRecognitionClass) {
-      alert('Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
-      return;
-    }
+  // Voice Input via Web Speech API with MediaRecorder Fallback
+  const handleToggleVoice = async () => {
+    setVoiceError(null);
 
+    // If currently listening, stop it cleanly
     if (isListening) {
+      if (activeRecognitionRef.current) {
+        try {
+          activeRecognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
       setIsListening(false);
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any;
+    const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
+
+    // Check if Web Speech API is supported
+    if (SpeechRecognitionClass) {
+      try {
+        // Request microphone permission explicitly first so Chrome/Edge doesn't silently reject
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Release the stream immediately since SpeechRecognition opens its own capture
+            stream.getTracks().forEach((track) => track.stop());
+          } catch (permErr: any) {
+            if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
+              setVoiceError('Microphone access was denied. Please allow microphone permissions in your browser URL bar / site settings.');
+              return;
+            }
+          }
+        }
+
+        const recognition = new SpeechRecognitionClass();
+        activeRecognitionRef.current = recognition;
+        recognition.lang = speechLang;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setVoiceError(null);
+        };
+
+        recognition.onresult = (event: any) => {
+          let interimTranscript = '';
+          let finalTranscript = '';
+
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript;
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
+          }
+
+          const currentText = (finalTranscript || interimTranscript).trim();
+          if (currentText) {
+            setInput(currentText);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn('Speech recognition error event:', event.error);
+          if (event.error === 'not-allowed') {
+            setVoiceError('Microphone blocked. Please tap the lock/tune icon near your browser address bar to allow microphone.');
+          } else if (event.error === 'no-speech') {
+            // normal timeout if user spoke nothing
+          } else if (event.error === 'network') {
+            setVoiceError('Speech network error. Falling back to Gemini server audio...');
+            // Fallback to Gemini server recording
+            startGeminiAudioFallback();
+            return;
+          } else {
+            setVoiceError(`Voice error: ${event.error || 'Failed to capture voice'}`);
+          }
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+          activeRecognitionRef.current = null;
+        };
+
+        recognition.start();
+        return;
+      } catch (err: any) {
+        console.warn('SpeechRecognition init failed, falling back to Gemini audio recorder:', err);
+      }
+    }
+
+    // Fallback: If Web Speech API is not supported or failed to start, use MediaRecorder + Gemini
+    startGeminiAudioFallback();
+  };
+
+  // Fallback audio recorder using browser MediaRecorder and /api/assistant/voice-test
+  const startGeminiAudioFallback = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setVoiceError('Audio recording is not supported in this browser environment. Please use Google Chrome or Microsoft Edge.');
+      return;
+    }
+
     try {
-      const recognition = new SpeechRecognitionClass();
-      recognition.lang = 'en-IN';
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
 
-      recognition.onstart = () => {
-        setIsListening(true);
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+      }
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
-      recognition.onresult = (event: any) => {
-        const transcript = event.results?.[0]?.[0]?.transcript || '';
-        setInput(transcript);
-        setIsListening(false);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (audioBlob.size === 0) return;
+
+        setIsTranscribingAudio(true);
+        try {
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Audio = (reader.result as string).split(',')[1];
+            const token = user ? await user.getIdToken() : '';
+            const res = await fetch('/api/assistant/voice-test', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: token ? `Bearer ${token}` : '',
+              },
+              body: JSON.stringify({
+                audioBase64: base64Audio,
+                mimeType,
+                expectedCategory: speechLang === 'ta-IN' ? 'Tamil' : 'English',
+              }),
+            });
+
+            const data = await res.json();
+            if (data.success && data.transcript) {
+              setInput(data.transcript);
+            } else if (data.error) {
+              setVoiceError(data.error);
+            }
+            setIsTranscribingAudio(false);
+          };
+          reader.readAsDataURL(audioBlob);
+        } catch (err: any) {
+          setVoiceError('Failed to transcribe audio via Gemini: ' + (err.message || String(err)));
+          setIsTranscribingAudio(false);
+        }
       };
 
-      recognition.onerror = () => {
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognition.start();
-    } catch (err) {
-      console.warn('Speech recognition error:', err);
+      recorder.start();
+      setIsListening(true);
+      setVoiceError(null);
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setVoiceError('Microphone permission was denied. Please allow microphone access in site settings.');
+      } else {
+        setVoiceError('Failed to start microphone: ' + (err.message || String(err)));
+      }
       setIsListening(false);
     }
   };
@@ -562,6 +701,22 @@ export const AssistantView: React.FC = () => {
         ))}
       </div>
 
+      {/* Voice Error Banner */}
+      {voiceError && (
+        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-amber-800 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Info className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>{voiceError}</span>
+          </div>
+          <button
+            onClick={() => setVoiceError(null)}
+            className="text-stone-400 hover:text-stone-600 text-xs font-semibold px-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Input Bar with Voice Input */}
       <div className="p-3 border-t border-stone-200 bg-white">
         <form
@@ -571,6 +726,16 @@ export const AssistantView: React.FC = () => {
           }}
           className="flex items-center gap-2"
         >
+          {/* Language selector toggle for voice */}
+          <button
+            type="button"
+            onClick={() => setSpeechLang((prev) => (prev === 'en-IN' ? 'ta-IN' : 'en-IN'))}
+            className="text-[10px] font-semibold px-2 py-1.5 rounded-lg border border-stone-200 bg-stone-50 text-stone-600 hover:bg-stone-100 transition-colors shrink-0"
+            title="Switch voice input language (English / Tamil)"
+          >
+            {speechLang === 'en-IN' ? 'EN' : 'தமிழ்'}
+          </button>
+
           {/* Voice input button */}
           <button
             type="button"
@@ -578,11 +743,25 @@ export const AssistantView: React.FC = () => {
             className={`p-2 rounded-xl border transition-colors ${
               isListening
                 ? 'bg-rose-600 text-white border-rose-600 animate-pulse'
+                : isTranscribingAudio
+                ? 'bg-amber-100 text-amber-700 border-amber-300 animate-pulse'
                 : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200'
             }`}
-            title={isListening ? 'Listening... click to stop' : 'Click to speak (Voice Input)'}
+            title={
+              isListening
+                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}... click to stop`
+                : isTranscribingAudio
+                ? 'Transcribing audio via Gemini...'
+                : `Click to speak in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}`
+            }
           >
-            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isTranscribingAudio ? (
+              <Loader2 className="w-4 h-4 animate-spin text-amber-700" />
+            ) : isListening ? (
+              <MicOff className="w-4 h-4" />
+            ) : (
+              <Mic className="w-4 h-4" />
+            )}
           </button>
 
           <input
@@ -590,7 +769,9 @@ export const AssistantView: React.FC = () => {
             type="text"
             placeholder={
               isListening
-                ? 'Listening to your voice in English or Tamil...'
+                ? `Listening to your voice in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}...`
+                : isTranscribingAudio
+                ? 'Processing voice with Gemini audio understanding...'
                 : 'Ask Gemini about leads, orders, schedules, or team settings (Enter to send)...'
             }
             value={input}
