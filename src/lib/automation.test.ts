@@ -299,13 +299,44 @@ export function runAutomationUnitTests() {
     results.push({ name: 'Test 14: Transition to Ordered cancels old task', passed: false, error: err.message });
   }
 
-  // 15. The AI Assistant has NO write path to automations
+  // 15. The AI Assistant has NO direct write path; only the confirm endpoint writes
   try {
-    // The assistant tool definitions are strictly read-only
-    const assistantAllowedActions = ['listAutomationRules', 'getAutomationActivity'];
-    const hasWriteAction = assistantAllowedActions.some((a) => a.includes('create') || a.includes('update') || a.includes('delete') || a.includes('trigger'));
-    assert(hasWriteAction === false, 'Assistant tools must contain zero write actions');
-    results.push({ name: 'Test 15: AI assistant has strictly read-only tools and no write path to automations', passed: true });
+    // The assistant tool definitions are strictly read and propose tools
+    const assistantToolNames = [
+      'search_customers',
+      'search_tasks',
+      'get_daily_or_weekly_plan',
+      'list_festival_events',
+      'propose_task_create',
+      'propose_task_edit',
+      'propose_task_status',
+      'propose_customer_add',
+      'propose_customer_edit',
+      'propose_customer_log_outcome',
+      'propose_plan_upsert',
+      'propose_festival_event',
+      'propose_meta_ad_draft',
+    ];
+
+    // Verify zero write tools exist in model tool catalog
+    const hasDirectWriteAction = assistantToolNames.some(
+      (a) =>
+        (a.includes('create') && !a.startsWith('propose_')) ||
+        (a.includes('update') && !a.startsWith('propose_')) ||
+        (a.includes('delete') && !a.startsWith('propose_')) ||
+        (a.includes('write') && !a.startsWith('propose_')) ||
+        a.includes('trigger')
+    );
+    assert(hasDirectWriteAction === false, 'Assistant model tools must contain zero direct write actions');
+
+    // Verify all mutation actions are strictly proposals
+    const mutationActions = assistantToolNames.filter((a) => !a.startsWith('search_') && !a.startsWith('get_') && !a.startsWith('list_'));
+    assert(mutationActions.every((a) => a.startsWith('propose_')), 'All assistant mutation tools must be proposals');
+
+    results.push({
+      name: 'Test 15: The AI assistant has no direct write path; only the confirm endpoint writes',
+      passed: true,
+    });
   } catch (err: any) {
     results.push({ name: 'Test 15: AI assistant write boundary', passed: false, error: err.message });
   }

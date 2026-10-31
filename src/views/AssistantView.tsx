@@ -17,16 +17,30 @@ import {
   Info,
   Loader2,
   Trash2,
+  ExternalLink,
+  RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
+import { ActionConfirmationCard } from '../components/assistant/ActionConfirmationCard';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   time: string;
+  pendingAction?: any;
+  executedResult?: {
+    success: boolean;
+    message: string;
+    actionId: string;
+    entity: string;
+    entityId: string;
+    undoExpiresAt?: string;
+    deepLink?: string;
+    undone?: boolean;
+  };
 }
 
 export const AssistantView: React.FC = () => {
@@ -39,7 +53,7 @@ export const AssistantView: React.FC = () => {
     {
       id: 'welcome',
       role: 'assistant',
-      text: 'Vanakkam! I am your Jaikrishna Industries business assistant powered by Google Gemini. You can ask me any question about your CRM leads, Meta ad campaign metrics, follow-up dates, orders, team members, or notification settings. Please note: I operate under a strict READ-ONLY guarantee and will never create, update, or delete data on your behalf.',
+      text: 'Vanakkam! I am your Jaikrishna Industries business assistant powered by Google Gemini. You can ask questions or ask me to schedule follow-ups, update leads, log calls, or prepare daily plans. Every action operates under a strict PROPOSE-THEN-CONFIRM flow: I will show you a full preview card, and nothing is changed until you tap Confirm.',
       time: '10:00 AM',
     },
   ]);
@@ -261,6 +275,7 @@ export const AssistantView: React.FC = () => {
         role: 'assistant',
         text: replyText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        pendingAction: data?.pendingAction,
       };
 
       setMessages((prev) => [...prev, botMsg]);
@@ -280,13 +295,93 @@ export const AssistantView: React.FC = () => {
     }
   };
 
+  const handleConfirmAction = async (msgId: string, actionId: string, parametersHash: string) => {
+    try {
+      const idToken = user ? await user.getIdToken() : '';
+      const res = await fetch('/api/assistant/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({ pendingActionId: actionId, parametersHash }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Failed to confirm action');
+      }
+
+      // Update message state
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id === msgId) {
+            return {
+              ...m,
+              pendingAction: undefined,
+              executedResult: {
+                success: true,
+                message: data.message,
+                actionId,
+                entity: data.entity,
+                entityId: data.entityId,
+                undoExpiresAt: data.undoExpiresAt,
+                deepLink: data.deepLink,
+              },
+            };
+          }
+          return m;
+        })
+      );
+    } catch (err: any) {
+      alert(`Action execution failed: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleUndoAction = async (msgId: string, actionId: string) => {
+    try {
+      const idToken = user ? await user.getIdToken() : '';
+      const res = await fetch('/api/assistant/undo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
+        body: JSON.stringify({ actionId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Failed to undo action');
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id === msgId && m.executedResult) {
+            return {
+              ...m,
+              executedResult: {
+                ...m.executedResult,
+                undone: true,
+                message: `Action undone: ${data.message}`,
+              },
+            };
+          }
+          return m;
+        })
+      );
+    } catch (err: any) {
+      alert(`Undo failed: ${err.message || String(err)}`);
+    }
+  };
+
   const sampleQuestions = [
+    'Schedule follow-up call with Ramesh tomorrow at 4pm',
+    'Add a new customer named Salem Pooja Stores with phone 9876543210',
     'Which ad had the lowest cost per conversation?',
     'What did the last Diwali ad spend and earn?',
-    'Which ads are waiting for results?',
-    'What is planned next month?',
-    'Compare my last 3 ads.',
-    'How many new customers from Salem do we have?',
+    'Save daily operations plan for today with target: 10 customer dispatches',
+    'Add festival event Navaratri Special Pooja on 2026-10-15',
   ];
 
   return (
@@ -302,8 +397,8 @@ export const AssistantView: React.FC = () => {
               <h2 className="font-bold text-stone-900 text-sm font-display">
                 Jaikrishna Gemini Operations Assistant
               </h2>
-              <span className="flex items-center gap-1 text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
-                <ShieldCheck className="w-3 h-3" /> Strict Read-Only
+              <span className="flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-200">
+                <ShieldCheck className="w-3 h-3 text-amber-700" /> Propose-Then-Confirm
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
@@ -352,6 +447,61 @@ export const AssistantView: React.FC = () => {
                 }`}
               >
                 <div className="whitespace-pre-wrap leading-relaxed">{m.text}</div>
+
+                {/* Proposed Action Confirmation Card */}
+                {m.pendingAction && !isUser && (
+                  <ActionConfirmationCard
+                    pendingAction={m.pendingAction}
+                    onConfirm={async (actionId, hash) => {
+                      await handleConfirmAction(m.id, actionId, hash);
+                    }}
+                    onCancel={(actionId) => {
+                      setMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === m.id ? { ...msg, pendingAction: undefined } : msg
+                        )
+                      );
+                    }}
+                  />
+                )}
+
+                {/* Executed Result with Deep Link and 30-min Undo Button */}
+                {m.executedResult && !isUser && (
+                  <div className="mt-2.5 p-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-stone-800 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-semibold text-emerald-900">
+                      <Check className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>{m.executedResult.message}</span>
+                    </div>
+
+                    <div className="flex items-center gap-3 pt-1 text-[11px]">
+                      {m.executedResult.deepLink && !m.executedResult.undone && (
+                        <a
+                          href={m.executedResult.deepLink}
+                          className="flex items-center gap-1 text-[#881337] font-semibold hover:underline"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>View Record</span>
+                        </a>
+                      )}
+
+                      {!m.executedResult.undone && (
+                        <button
+                          onClick={() => handleUndoAction(m.id, m.executedResult!.actionId)}
+                          className="flex items-center gap-1 text-stone-600 hover:text-stone-900 font-medium transition-colors"
+                          title="Undo within 30 minutes"
+                        >
+                          <RotateCcw className="w-3 h-3 text-stone-500" />
+                          <span>Undo Action</span>
+                        </button>
+                      )}
+
+                      {m.executedResult.undone && (
+                        <span className="text-stone-500 italic">Action has been undone.</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div
                   className={`flex items-center justify-between mt-2 pt-1 text-[10px] ${
                     isUser ? 'text-amber-200/80 border-t border-white/10' : 'text-stone-400 border-t border-stone-200/60'

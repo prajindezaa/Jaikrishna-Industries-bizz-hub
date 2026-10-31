@@ -143,6 +143,13 @@ service cloud.firestore {
       allow read, write: if isAllowedMember();
     }
 
+    // AI Assistant Pending Actions: Strictly managed by server Admin SDK.
+    // Allowlisted members can read their own pending proposals, but CANNOT create/edit/delete directly.
+    match /pending_actions/{actionId} {
+      allow read: if isAllowedMember() && resource.data.memberEmail == currentUserEmail();
+      allow write: if false; // Only /api/assistant and /api/assistant/confirm via Admin SDK can write
+    }
+
     // Notification logs & deduplication records (Admin SDK only)
     match /notification_log/{logId} {
       allow read: if isAllowedMember();

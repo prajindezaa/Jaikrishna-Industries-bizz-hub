@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { WhatsAppHubSettings } from '../types';
 import { PushOnboarding } from '../components/layout/PushOnboarding';
 import { CustomerGroupSettingsSection } from '../components/settings/CustomerGroupSettingsSection';
+import { AiAssistantSettingsCard } from '../components/settings/AiAssistantSettingsCard';
 import { db } from '../lib/firebase';
 
 export const SettingsView: React.FC = () => {
@@ -554,6 +555,9 @@ export const SettingsView: React.FC = () => {
 
         {/* Right Column: Diagnostics, Quotas & Integrations */}
         <div className="space-y-6">
+          {/* AI Operations & Actions Settings Card */}
+          <AiAssistantSettingsCard />
+
           {/* Live Service Diagnostics */}
           <div className="bg-white rounded-xl border border-stone-200/80 p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-stone-100">
