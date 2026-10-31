@@ -85,11 +85,13 @@ class SpokenVoiceController {
       console.warn('[SpokenVoiceController] No Tamil TTS voice found on this device');
     }
 
-    this.isSpeaking = true;
+    // Prevent browser garbage collection bug in Chromium/WebKit where utterance is GC-ed mid-sentence
+    (window as any).__activeUtterance = utterance;
 
     utterance.onend = () => {
       this.isSpeaking = false;
       this.currentUtterance = null;
+      (window as any).__activeUtterance = null;
       options.onEnd?.();
     };
 
@@ -97,8 +99,14 @@ class SpokenVoiceController {
       console.warn('[SpokenVoiceController] TTS error:', e);
       this.isSpeaking = false;
       this.currentUtterance = null;
+      (window as any).__activeUtterance = null;
       options.onEnd?.();
     };
+
+    // Ensure audio subsystem is active before speak
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
 
     window.speechSynthesis.speak(utterance);
   }
@@ -108,6 +116,7 @@ class SpokenVoiceController {
       window.speechSynthesis.cancel();
       this.isSpeaking = false;
       this.currentUtterance = null;
+      (window as any).__activeUtterance = null;
     }
   }
 

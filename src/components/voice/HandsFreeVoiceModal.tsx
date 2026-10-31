@@ -77,6 +77,8 @@ export const HandsFreeVoiceModal: React.FC<HandsFreeVoiceModalProps> = ({
   const silencePromptCountRef = useRef<number>(0);
   const countdownIntervalRef = useRef<any>(null);
   const isClosingRef = useRef<boolean>(false);
+  const speechDebounceTimerRef = useRef<any>(null);
+  const accumulatedFinalRef = useRef<string>('');
 
   // 1. Initial Greeting when Opened
   useEffect(() => {
@@ -124,6 +126,8 @@ export const HandsFreeVoiceModal: React.FC<HandsFreeVoiceModalProps> = ({
   const clearTimers = () => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    if (speechDebounceTimerRef.current) clearTimeout(speechDebounceTimerRef.current);
+    accumulatedFinalRef.current = '';
   };
 
   const resetSilenceTimer = () => {
@@ -264,13 +268,25 @@ export const HandsFreeVoiceModal: React.FC<HandsFreeVoiceModalProps> = ({
           }
         }
 
-        setInterimTranscript(interimChunk);
+        const combinedInterim = `${accumulatedFinalRef.current} ${finalChunk} ${interimChunk}`.trim();
+        setInterimTranscript(combinedInterim);
 
         if (finalChunk.trim()) {
-          const userSaid = finalChunk.trim();
-          setTranscript(userSaid);
-          setInterimTranscript('');
-          handleUserUtterance(userSaid);
+          accumulatedFinalRef.current = `${accumulatedFinalRef.current} ${finalChunk.trim()}`.trim();
+          setTranscript(accumulatedFinalRef.current);
+
+          // Debounce final sentence completion by 1000ms so user can speak multiple words and full sentences naturally
+          if (speechDebounceTimerRef.current) {
+            clearTimeout(speechDebounceTimerRef.current);
+          }
+          speechDebounceTimerRef.current = setTimeout(() => {
+            const fullSpeech = accumulatedFinalRef.current.trim();
+            if (fullSpeech) {
+              accumulatedFinalRef.current = '';
+              setInterimTranscript('');
+              handleUserUtterance(fullSpeech);
+            }
+          }, 1000);
         }
       };
 

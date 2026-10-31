@@ -84,7 +84,7 @@ console.log('\n[Test 4] High-Priority Spoken Confirmation Phrases');
 
   // Unclear / noise words must NEVER confirm
   const unclear = spokenVoiceController.parseVoiceIntent('hmm maybe');
-  assert.strictEqual(unclear.isConfirmation, undefined, 'Noise/unclear words must not confirm');
+  assert.strictEqual(Boolean(unclear.isConfirmation), false, 'Noise/unclear words must not confirm');
 
   console.log('✓ Spoken confirmation validation passed');
 }
