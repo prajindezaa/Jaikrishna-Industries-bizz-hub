@@ -200,6 +200,11 @@ export const ActionConfirmationCard: React.FC<ActionConfirmationCardProps> = ({
         </button>
 
         <div className="flex items-center gap-2">
+          {riskLevel === 'low' && !requiresSecondConfirmation && !isExpired && (
+            <span className="text-[11px] text-stone-500 italic hidden sm:inline">
+              (Say &quot;Confirm&quot; / &quot;சரி&quot; or tap)
+            </span>
+          )}
           <button
             onClick={handleConfirmTap}
             disabled={loading || isExpired}

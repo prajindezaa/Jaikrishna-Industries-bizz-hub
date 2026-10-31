@@ -292,6 +292,42 @@ async function handleProposeTool(
     };
   }
 
+  // Dynamic High-Priority / Risk Assessment Rules:
+  // 1. Reassigning task to another member
+  if (catalog === 'tasks') {
+    const assigned = resolvedParams.assignedTo || resolvedParams.updates?.assignedTo;
+    if (assigned && assigned.toLowerCase() !== memberEmail.toLowerCase()) {
+      riskLevel = 'high';
+    }
+    // 2. Changes to past dates
+    const dateVal = resolvedParams.date || resolvedParams.updates?.date;
+    if (dateVal) {
+      const todayIst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+      if (dateVal < todayIst) {
+        riskLevel = 'high';
+      }
+    }
+  }
+
+  // 3. Changing customer stage to 'Ordered' or 'Not interested' (Lost/Won/Ordered/Not interested)
+  // 4. Editing phone number or GSTIN
+  if (catalog === 'customers') {
+    const stage = resolvedParams.leadStage || resolvedParams.updates?.leadStage;
+    if (stage && (stage.toLowerCase() === 'ordered' || stage.toLowerCase() === 'won' || stage.toLowerCase() === 'not interested' || stage.toLowerCase() === 'lost')) {
+      riskLevel = 'high';
+    }
+    const phoneEdited = Boolean(resolvedParams.updates && 'phone' in resolvedParams.updates);
+    const gstinEdited = Boolean(resolvedParams.updates && ('gstin' in resolvedParams.updates || 'gst' in resolvedParams.updates));
+    if (phoneEdited || gstinEdited) {
+      riskLevel = 'high';
+    }
+  }
+
+  // 5. Bulk items (> 3 records)
+  if (Array.isArray(resolvedParams.items) && resolvedParams.items.length > 3) {
+    riskLevel = 'high';
+  }
+
   // Compute parameter hash
   const parametersHash = computeParametersHash(resolvedParams);
 

@@ -27,6 +27,7 @@ import { ActionConfirmationCard } from '../components/assistant/ActionConfirmati
 import { micService, MicPermissionState } from '../services/microphoneService';
 import { MicrophoneExplanationModal } from '../components/voice/MicrophoneExplanationModal';
 import { MicrophoneRecoveryModal } from '../components/voice/MicrophoneRecoveryModal';
+import { spokenVoiceController, SpokenClarification } from '../services/spokenVoiceController';
 
 interface Message {
   id: string;
@@ -87,6 +88,12 @@ export const AssistantView: React.FC = () => {
   const [countdownRemaining, setCountdownRemaining] = useState<number>(60);
   const countdownTimerRef = useRef<any>(null);
 
+  const [activeClarification, setActiveClarification] = useState<SpokenClarification | null>(null);
+  const [activePendingAction, setActivePendingAction] = useState<any | null>(null);
+  const [offerTextInput, setOfferTextInput] = useState<boolean>(false);
+  const [spokenReadbackNotice, setSpokenReadbackNotice] = useState<string | null>(null);
+  const voiceConfirmTimerRef = useRef<any>(null);
+
   // Subscribe to central micService
   useEffect(() => {
     const unsub = micService.subscribeState((st) => {
@@ -103,6 +110,11 @@ export const AssistantView: React.FC = () => {
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     };
   }, []);
+
+  // Helper to speak assistant answers or questions
+  const speakAssistantReply = (text: string, lang: 'en-IN' | 'ta-IN' = speechLang, onFinish?: () => void) => {
+    spokenVoiceController.speak(text, lang, { onEnd: onFinish });
+  };
 
   // Voice toggle: Checks in-app explanation snooze before prompting
   const handleToggleVoice = async () => {
@@ -174,6 +186,51 @@ export const AssistantView: React.FC = () => {
           const currentText = (finalTranscript || interimTranscript).trim();
           if (currentText) {
             setInput(currentText);
+          }
+
+          // If transcript has finished, evaluate spoken voice intents
+          if (finalTranscript.trim()) {
+            const intent = spokenVoiceController.parseVoiceIntent(finalTranscript.trim(), activePendingAction);
+
+            if (intent.isRepeat) {
+              spokenVoiceController.repeatLastSpoken();
+              return;
+            }
+            if (intent.isSlower) {
+              spokenVoiceController.speakSlower();
+              return;
+            }
+            if (intent.isCancellation) {
+              spokenVoiceController.stopSpeaking();
+              setActiveClarification(null);
+              if (activePendingAction) {
+                setActivePendingAction(null);
+                setSpokenReadbackNotice('Proposal cancelled by voice.');
+                speakAssistantReply('Proposal cancelled.', speechLang);
+              }
+              return;
+            }
+            if (intent.isConfirmation && activePendingAction) {
+              // Voice confirmation is permitted ONLY for low-risk actions without second confirm
+              if (activePendingAction.riskLevel === 'low' && !activePendingAction.requiresSecondConfirmation) {
+                // Find matching pending message
+                const msg = messages.find((m) => m.pendingAction?.id === activePendingAction.id);
+                if (msg) {
+                  handleConfirmAction(msg.id, activePendingAction.id, activePendingAction.parametersHash);
+                  speakAssistantReply('Confirmed and executed.', speechLang);
+                  setActivePendingAction(null);
+                  return;
+                }
+              } else {
+                speakAssistantReply('This action requires a physical tap on the confirmation card to confirm.', speechLang);
+                return;
+              }
+            }
+            if (intent.isCorrection && activePendingAction) {
+              // In-place correction of pending action
+              handleInPlaceVoiceCorrection(intent);
+              return;
+            }
           }
         };
 
@@ -292,6 +349,39 @@ export const AssistantView: React.FC = () => {
       setVoiceError('Failed to transcribe audio: ' + (err.message || String(err)));
       setIsTranscribingAudio(false);
     }
+  };
+
+  // In-Place Voice Correction Handler (updates pending proposal card without starting over)
+  const handleInPlaceVoiceCorrection = async (intent: any) => {
+    if (!activePendingAction) return;
+
+    const action = { ...activePendingAction };
+    const field = intent.field;
+    const val = intent.newValue;
+
+    let updatedSummary = action.preview?.summary || '';
+    if (field === 'time') {
+      action.preview.after.startTime = val;
+      updatedSummary += ` (Time updated to ${val})`;
+      speakAssistantReply(`Updated time to ${val}. Details are on the screen.`, speechLang);
+    } else if (field === 'date') {
+      action.preview.after.date = val;
+      updatedSummary += ` (Date changed to ${val})`;
+      speakAssistantReply(`Changed date to ${val}. Details are on the screen.`, speechLang);
+    } else if (field === 'assignedTo') {
+      action.preview.after.assignedTo = val;
+      const memberName = val.includes('sales') ? 'Sales Manager' : val.includes('srini') ? 'Owner' : 'Admin';
+      updatedSummary += ` (Reassigned to ${memberName})`;
+      speakAssistantReply(`Reassigned to ${memberName}. Details are on the screen.`, speechLang);
+    }
+
+    action.preview.summary = updatedSummary;
+    setActivePendingAction(action);
+
+    // Update message card in conversation
+    setMessages((prev) =>
+      prev.map((m) => (m.pendingAction?.id === action.id ? { ...m, pendingAction: action } : m))
+    );
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -453,7 +543,33 @@ export const AssistantView: React.FC = () => {
       };
 
       setMessages((prev) => [...prev, botMsg]);
-    } catch (err) {
+
+      // Spoken Readback & 5-Second Voice Confirmation Window
+      if (data?.pendingAction) {
+        setActivePendingAction(data.pendingAction);
+        const spokenSummary = `I prepared a proposal to ${data.pendingAction.preview?.summary}. ${
+          data.pendingAction.riskLevel === 'low' && !data.pendingAction.requiresSecondConfirmation
+            ? 'Say confirm to execute, or tell me changes like change time to 5 PM.'
+            : 'This is a higher risk action. Please review and tap Confirm on screen.'
+        }`;
+        setSpokenReadbackNotice(spokenSummary);
+
+        speakAssistantReply(spokenSummary, speechLang, () => {
+          // If low-risk, briefly re-arm voice capture for 5 seconds to listen for spoken confirmation
+          if (data.pendingAction.riskLevel === 'low' && !data.pendingAction.requiresSecondConfirmation) {
+            handleToggleVoice();
+            if (voiceConfirmTimerRef.current) clearTimeout(voiceConfirmTimerRef.current);
+            voiceConfirmTimerRef.current = setTimeout(() => {
+              if (isListening) handleToggleVoice();
+            }, 5000);
+          }
+        });
+      } else if (replyText) {
+        // Speak short textual reply (summarized, not long list)
+        const shortReply = replyText.length > 150 ? replyText.slice(0, 150) + '... details are on the screen.' : replyText;
+        speakAssistantReply(shortReply, speechLang);
+      }
+    } catch (err: any) {
       console.warn('API error, falling back to local assistant engine:', err);
       // Fallback: Generate intelligent contextual response directly in the client if backend is down/unreachable
       const localReply = getClientAssistantFallback(q.trim(), contextData);
@@ -464,6 +580,16 @@ export const AssistantView: React.FC = () => {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, botMsg]);
+
+      // Check failure count
+      const failureStatus = spokenVoiceController.recordFailure();
+      if (failureStatus.shouldOfferTextInput) {
+        setOfferTextInput(true);
+        speakAssistantReply(
+          'I am having trouble understanding your speech clearly. Please use text typing below.',
+          speechLang
+        );
+      }
     } finally {
       setThinking(false);
     }
@@ -735,6 +861,58 @@ export const AssistantView: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {/* Spoken Clarification Card (Ambiguous customer name / Missing field) */}
+      {activeClarification && (
+        <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-200 text-indigo-950 text-xs animate-in fade-in space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-indigo-900">
+              <Sparkles className="w-4 h-4 text-indigo-600" />
+              <span>{activeClarification.spokenPrompt}</span>
+            </div>
+            <button
+              onClick={() => setActiveClarification(null)}
+              className="text-stone-400 hover:text-stone-600 text-xs font-semibold px-1"
+            >
+              ✕
+            </button>
+          </div>
+
+          {activeClarification.options && activeClarification.options.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pt-1">
+              <span className="text-[11px] font-semibold text-indigo-800">Select or speak:</span>
+              {activeClarification.options.map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    handleSend(opt);
+                    setActiveClarification(null);
+                  }}
+                  className="px-3 py-1 rounded-lg bg-white border border-indigo-200 text-indigo-900 font-medium text-xs hover:border-indigo-600 transition-colors shrink-0 shadow-2xs"
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Repeated Misunderstanding Fallback Notice */}
+      {offerTextInput && (
+        <div className="px-4 py-2 bg-amber-100 border-t border-amber-300 text-amber-900 text-xs flex items-center justify-between animate-in fade-in">
+          <div className="flex items-center gap-2 font-medium">
+            <Info className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>Voice input had trouble hearing your words clearly. Please type your message in the box below.</span>
+          </div>
+          <button
+            onClick={() => setOfferTextInput(false)}
+            className="text-amber-800 hover:text-amber-950 text-xs font-bold px-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Voice Error Banner */}
       {voiceError && (

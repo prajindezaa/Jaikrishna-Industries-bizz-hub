@@ -22,6 +22,7 @@ import {
   Truck,
   CreditCard,
   Layers,
+  Mic,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -41,6 +42,7 @@ import { useApp } from '../context/AppContext';
 import { normalizePhone, formatPhoneDisplay } from '../lib/phone';
 import { formatINR } from '../lib/meta-ads-utils';
 import { TodaysFocusCard } from '../components/dashboard/TodaysFocusCard';
+import { HandsFreeVoiceModal } from '../components/voice/HandsFreeVoiceModal';
 
 interface DashboardViewProps {
   onNavigate: (module: ActiveModule) => void;
@@ -57,6 +59,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const { language, t } = useLanguage();
 
   const [phoneTestInput, setPhoneTestInput] = useState('');
+  const [isVoiceAssistantOpen, setIsVoiceAssistantOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<{
     status?: string;
     environment?: string;
@@ -263,6 +266,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <CheckSquare className="w-4 h-4 text-amber-300" />
               <span>{t('newTask', 'Schedule Task')}</span>
+            </button>
+
+            <button
+              onClick={() => setIsVoiceAssistantOpen(true)}
+              className="px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 rounded-lg shadow-md transition-all inline-flex items-center gap-2 ring-2 ring-rose-400/40 animate-pulse hover:animate-none"
+              title="Open Hands-Free Voice Assistant (Tamil & English)"
+            >
+              <Mic className="w-4 h-4 text-amber-300" />
+              <span>{language === 'ta' ? 'குரல் உதவியாளர் (Voice Assistant)' : 'Voice Assistant'}</span>
             </button>
 
             <button
@@ -740,6 +752,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Hands-Free Voice Assistant Modal */}
+      <HandsFreeVoiceModal
+        isOpen={isVoiceAssistantOpen}
+        onClose={() => setIsVoiceAssistantOpen(false)}
+        lang={language === 'ta' ? 'ta-IN' : 'en-IN'}
+        autoExecuteSeconds={3}
+      />
     </div>
   );
 };

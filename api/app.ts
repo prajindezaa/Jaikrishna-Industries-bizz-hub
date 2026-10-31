@@ -1118,6 +1118,21 @@ app.post('/api/assistant/confirm', standardRateLimiter, requireAuth, async (req:
         throw new Error('Action parameters have been tampered with or do not match server record.');
       }
 
+      // 5. Server-Side Risk Level & Confirmation Verification
+      const { confirmationSource, spokenTranscript, confidence } = req.body || {};
+      if (action.riskLevel === 'high' || action.requiresSecondConfirmation) {
+        if (confirmationSource === 'voice') {
+          const validVoiceConfirmations = ['yes', 'confirm', 'proceed', 'சரி', 'ஆமா', 'உறுதி செய்', 'ok'];
+          const normTranscript = (spokenTranscript || '').toLowerCase().trim();
+          const hasAffirmation = validVoiceConfirmations.some((v) => normTranscript.includes(v));
+          const confScore = typeof confidence === 'number' ? confidence : 1.0;
+
+          if (!hasAffirmation || confScore < 0.6) {
+            throw new Error('High-priority action requires a clear spoken confirmation ("yes", "சரி", "ஆமா"). Confirmation rejected.');
+          }
+        }
+      }
+
       // Transition to 'confirmed'
       const executedAt = now.toISOString();
       const undoExpiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
@@ -1126,6 +1141,8 @@ app.post('/api/assistant/confirm', standardRateLimiter, requireAuth, async (req:
         status: 'confirmed',
         executedAt,
         executedBy: memberEmail,
+        confirmationSource: confirmationSource || 'ui_tap',
+        spokenTranscript: spokenTranscript || null,
         undoExpiresAt,
       });
 
