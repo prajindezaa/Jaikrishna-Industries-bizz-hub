@@ -54,6 +54,40 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
+## AI Operations Assistant (Propose-Then-Confirm)
+
+The AI Assistant operates under a strict **Propose-Then-Confirm** model. It has **zero direct write tools** in its model schema and cannot alter records on its own.
+
+### What the AI Assistant CAN Do:
+1. **Tasks**: Propose scheduled follow-up calls, visits, packing, or dispatch tasks with automatic Asia/Kolkata date resolution (defaults to 10:00 AM – 10:30 AM IST).
+2. **Customers**: Propose adding wholesale/retail leads, updating contact persons or stages (`New`, `Contacted`, `Interested`, `Sample sent`, `Negotiation`, `Ordered`, `Not interested`), setting next follow-up dates, and logging call outcomes.
+3. **Planning**: Propose daily morning briefings and weekly target plans.
+4. **Festivals & Meta Ads**: Propose festival calendar events and Meta ad planning drafts.
+
+### What the AI Assistant CANNOT Do (Blocked by Scope):
+* Delete or move records to Trash directly.
+* Restore records or run bulk imports.
+* Process orders, accept payments, modify stock or pricing.
+* Send direct messages (WhatsApp, Email, SMS, Push) to customers.
+* Modify automation rules, team members, or system settings.
+
+### How Undo Works:
+* Every executed action captures the before-state and creates an audit entry in `activity_logs` as `by AI assistant for {member}`.
+* The member has a **30-minute undo window**.
+* **Concurrency Protection**: If another member has modified the record since the AI action, undo is safely blocked to protect human edits.
+
+### Privacy Notice:
+* Spoken audio and customer notes are processed through the **private enterprise Gemini tier**.
+* Voice recordings are processed in memory and **never saved to disk or stored in Firestore**.
+* Customer data is never used to train public AI models.
+
+### Troubleshooting Voice:
+* **Android Chrome / PC Chrome**: Use either browser dictation or the Gemini audio path.
+* **No Tamil Voice on Device**: If the device lacks a Tamil voice pack (`ta-IN`), the assistant displays text on screen rather than mispronouncing Tamil with an English voice.
+* **Voice Confirmation**: Spoken confirmation (`Confirm`, `சரி`, `ஆமா`) is accepted only during the 5-second window after speech finishes for low-risk actions. High-risk actions require a physical tap on the confirmation card.
+
+---
+
 ## Deployment
 
 * **Frontend & Serverless API**: Connect GitHub repository directly to **Vercel** with the Vite preset.
@@ -64,3 +98,4 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
   ```bash
   firebase deploy --only firestore:rules,firestore:indexes,functions
   ```
+
