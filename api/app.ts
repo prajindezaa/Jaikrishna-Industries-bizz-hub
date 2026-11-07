@@ -971,63 +971,19 @@ function getSmartAssistantFallback(message: string, context: any): string {
   return `Vanakkam! I have received your inquiry regarding "${message}". Based on your live Jaikrishna Industries database: you have ${summary.totalCustomers} customers, ${metaAds.length} Meta ad campaigns, ${summary.totalOrders} orders, and ${summary.totalTasks} scheduled tasks. How else can I assist your operations today?`;
 }
 
-// 10. Propose-Then-Confirm Gemini AI Assistant Endpoint (Strict Auth + Rate Limiter Required)
+// 10. Read-Only Gemini AI Assistant Endpoint (Strict Auth + Rate Limiter Required)
 app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { message, context } = req.body;
-  const memberEmail = (req.memberEmail || '').toLowerCase().trim();
-
   if (!message || typeof message !== 'string') {
     res.status(400).json({ error: 'Message text is required' });
     return;
   }
 
-  // Check Server Environment Override Kill Switch
-  if (process.env.DISABLE_AI_ACTIONS === 'true') {
-    res.status(503).json({
-      error: 'AI Actions Disabled',
-      message: 'AI Assistant actions are temporarily disabled via server emergency flag.',
-    });
-    return;
-  }
-
-  const adminSdk = getFirebaseAdmin();
-  const db = adminSdk.firestore();
-
-  // Load Global & Member AI Settings
-  let aiSettings: any = {
-    globalAiActionsEnabled: true,
-    aiActionsEnabled: true,
-    dailyActionCap: 20,
-    defaultTaskTime: '10:00',
-    requireSecondConfirmForMedium: false,
-  };
-
-  try {
-    const settingsDoc = await db.collection('settings').doc('ai_assistant').get();
-    if (settingsDoc.exists) {
-      const data = settingsDoc.data() || {};
-      aiSettings.globalAiActionsEnabled = data.globalAiActionsEnabled !== false;
-      const memberSpecific = data.memberSettings?.[memberEmail] || {};
-      aiSettings.aiActionsEnabled = memberSpecific.aiActionsEnabled !== false;
-      aiSettings.dailyActionCap = Math.min(memberSpecific.dailyActionCap || 20, 50);
-      aiSettings.defaultTaskTime = memberSpecific.defaultTaskTime || '10:00';
-      aiSettings.requireSecondConfirmForMedium = Boolean(memberSpecific.requireSecondConfirmForMedium);
-    }
-  } catch (err) {
-    console.warn('[AI Assistant] Could not load AI settings, using safe defaults:', err);
-  }
-
-  if (!aiSettings.globalAiActionsEnabled || !aiSettings.aiActionsEnabled) {
-    res.status(403).json({
-      error: 'AI Actions Disabled',
-      message: 'AI Assistant actions are currently disabled by team settings.',
-    });
-    return;
-  }
-
   const apiKey = process.env.GEMINI_API_KEY;
+  // Explicitly set production Gemini model
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
-  // Fallback to offline rule-based response if Gemini API key is missing
+  // Transparent Offline Rule-Based Fallback when API key is not configured
   if (!apiKey || apiKey.trim() === '') {
     const smartReply = getSmartAssistantFallback(message, context);
     res.json({
@@ -1035,293 +991,81 @@ app.post('/api/assistant', assistantRateLimiter, requireAuth, async (req: Authen
       modelUsed: 'Offline Rule-Based Engine (No Gemini API Key)',
       isAiGenerated: false,
       reply: `[System Notice: Answered via Offline Business Rules]\n\n${smartReply}`,
-      hasProposal: false,
     });
     return;
   }
 
   try {
-    const { handleAssistantTurn } = await import('../server/assistant/proposeEngine.js');
-    const result = await handleAssistantTurn(message, memberEmail, context, aiSettings);
+    const { GoogleGenAI } = await import('@google/genai');
+    // v2 SDK requires apiKey to be passed explicitly to the constructor
+    const ai = new GoogleGenAI({ apiKey });
+
+    const systemPrompt = `You are the dedicated Read-Only Business Operations Assistant for Jaikrishna Industries, a premier pooja products manufacturer based in Salem, Tamil Nadu (manufacturing pure Bhimseni camphor, camphor tablets, premium agarbatti, Deepam lamp oil, pure sambrani cups, and traditional rose water).
+    
+CRITICAL OPERATIONAL INVARIANTS:
+1. STRICT READ-ONLY GUARANTEE: You have read-only visibility into the company's leads, tasks, orders, team members, and automations. Under NO circumstances do you execute create, update, or delete operations. You cannot enable, run, edit, or undo automations. If asked to modify, delete, or create records or automations, guide the user to the appropriate screen in the Jaikrishna Hub.
+2. ACCURACY: Base your answers on the provided real-time workspace context.
+3. TONE: Courteous, executive, and encouraging (use 'Vanakkam' where appropriate). You can converse in English or Tamil.
+
+CURRENT WORKSPACE CONTEXT:
+${context ? JSON.stringify(context, null, 2) : 'No live workspace context provided.'}`;
+
+    // Multi-model resilient fallback chain for production reliability
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    const fallbackModels = [primaryModel, 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.8-flash']
+      .filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+    let lastError: any = null;
+    let chosenModel = primaryModel;
+    let replyText: string | null = null;
+
+    for (const modelToTry of fallbackModels) {
+      try {
+        const apiPromise = ai.models.generateContent({
+          model: modelToTry,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `${systemPrompt}\n\nUser Question: ${message}` }],
+            },
+          ],
+        });
+
+        // 12-second timeout allows sufficient time for complete responses
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Gemini API timeout (12s) on ${modelToTry}`)), 12000)
+        );
+
+        const response: any = await Promise.race([apiPromise, timeoutPromise]);
+        if (typeof response?.text === 'string' && response.text.trim()) {
+          replyText = response.text.trim();
+          chosenModel = modelToTry;
+          break; // Succeeded!
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Gemini Assistant] Model ${modelToTry} attempt failed, trying fallback:`, err?.message || String(err));
+      }
+    }
+
+    if (!replyText) {
+      throw lastError || new Error('All Gemini model fallbacks exhausted');
+    }
 
     res.json({
       success: true,
-      modelUsed: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      modelUsed: chosenModel,
       isAiGenerated: true,
-      reply: result.reply,
-      hasProposal: result.hasProposal,
-      pendingAction: result.pendingAction,
+      reply: replyText,
     });
   } catch (err: unknown) {
-    console.error('Gemini Assistant Propose Error:', err);
-    const errDetail = (err as any)?.message || String(err);
+    console.error('Gemini Assistant Error / Timeout:', err);
     const smartReply = getSmartAssistantFallback(message, context);
     res.json({
       success: true,
       modelUsed: 'Offline Rule-Based Engine (Gemini Fallback)',
       isAiGenerated: false,
-      reply: `[System Notice: Gemini API was unavailable (${errDetail}); answered via Offline Business Rules]\n\n${smartReply}`,
-      hasProposal: false,
-    });
-  }
-});
-
-// 10b. Action Confirm Execution Endpoint (Only authenticated member can trigger)
-app.post('/api/assistant/confirm', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
-    const { pendingActionId, parametersHash } = req.body;
-
-    if (!pendingActionId || !parametersHash) {
-      res.status(400).json({ error: 'pendingActionId and parametersHash are required.' });
-      return;
-    }
-
-    if (process.env.DISABLE_AI_ACTIONS === 'true') {
-      res.status(503).json({ error: 'AI actions are disabled via server flag.' });
-      return;
-    }
-
-    const adminSdk = getFirebaseAdmin();
-    const db = adminSdk.firestore();
-    const actionRef = db.collection('pending_actions').doc(pendingActionId);
-
-    // Run within atomic transaction to guarantee single-use and tamper protection
-    const executionResult = await db.runTransaction(async (transaction) => {
-      const docSnap = await transaction.get(actionRef);
-      if (!docSnap.exists) {
-        throw new Error('Pending action not found.');
-      }
-
-      const action = docSnap.data() as any;
-
-      // 1. Verify Member Ownership
-      if (action.memberEmail !== memberEmail) {
-        throw new Error('Unauthorized: You cannot confirm an action proposed for another member.');
-      }
-
-      // 2. Verify Single Use
-      if (action.status !== 'pending') {
-        throw new Error(`Action cannot be confirmed because its status is "${action.status}".`);
-      }
-
-      // 3. Verify 5-minute Expiry
-      const now = new Date();
-      if (action.expiresAt && new Date(action.expiresAt).getTime() < now.getTime()) {
-        transaction.update(actionRef, { status: 'expired' });
-        throw new Error('This proposal has expired (5-minute limit). Please ask the assistant again.');
-      }
-
-      // 4. Verify Parameter Hash Integrity (Tamper Check)
-      const { computeParametersHash } = await import('../server/assistant/proposeEngine.js');
-      const expectedHash = computeParametersHash(action.parameters);
-      if (parametersHash !== action.parametersHash || parametersHash !== expectedHash) {
-        throw new Error('Action parameters have been tampered with or do not match server record.');
-      }
-
-      // 5. Server-Side Risk Level & Confirmation Verification
-      const { confirmationSource, spokenTranscript, confidence } = req.body || {};
-      if (action.riskLevel === 'high' || action.requiresSecondConfirmation) {
-        if (confirmationSource === 'voice') {
-          const validVoiceConfirmations = ['yes', 'confirm', 'proceed', 'சரி', 'ஆமா', 'உறுதி செய்', 'ok'];
-          const normTranscript = (spokenTranscript || '').toLowerCase().trim();
-          const hasAffirmation = validVoiceConfirmations.some((v) => normTranscript.includes(v));
-          const confScore = typeof confidence === 'number' ? confidence : 1.0;
-
-          if (!hasAffirmation || confScore < 0.6) {
-            throw new Error('High-priority action requires a clear spoken confirmation ("yes", "சரி", "ஆமா"). Confirmation rejected.');
-          }
-        }
-      }
-
-      // Transition to 'confirmed'
-      const executedAt = now.toISOString();
-      const undoExpiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
-
-      transaction.update(actionRef, {
-        status: 'confirmed',
-        executedAt,
-        executedBy: memberEmail,
-        confirmationSource: confirmationSource || 'ui_tap',
-        spokenTranscript: spokenTranscript || null,
-        undoExpiresAt,
-      });
-
-      return { action, executedAt, undoExpiresAt };
-    });
-
-    const { action, executedAt, undoExpiresAt } = executionResult;
-
-    // Execute via pure server-side entity services
-    let serviceResult: any;
-    let targetEntityId: string = action.targetEntityId || '';
-
-    if (action.tool === 'propose_task_create') {
-      const { executeTaskCreate } = await import('../server/services/taskService.js');
-      serviceResult = await executeTaskCreate(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.taskId;
-    } else if (action.tool === 'propose_task_edit') {
-      const { executeTaskUpdate } = await import('../server/services/taskService.js');
-      serviceResult = await executeTaskUpdate(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.taskId;
-    } else if (action.tool === 'propose_task_status') {
-      const { executeTaskStatusChange } = await import('../server/services/taskService.js');
-      serviceResult = await executeTaskStatusChange(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.taskId;
-    } else if (action.tool === 'propose_customer_add') {
-      const { executeCustomerAdd } = await import('../server/services/customerService.js');
-      serviceResult = await executeCustomerAdd(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.customerId;
-    } else if (action.tool === 'propose_customer_edit') {
-      const { executeCustomerUpdate } = await import('../server/services/customerService.js');
-      serviceResult = await executeCustomerUpdate(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.customerId;
-    } else if (action.tool === 'propose_customer_log_outcome') {
-      const { executeCustomerLogOutcome } = await import('../server/services/customerService.js');
-      serviceResult = await executeCustomerLogOutcome(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.customerId;
-    } else if (action.tool === 'propose_plan_upsert') {
-      const { executePlanUpsert } = await import('../server/services/planAndFestivalService.js');
-      serviceResult = await executePlanUpsert(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.planId;
-    } else if (action.tool === 'propose_festival_event') {
-      const { executeFestivalUpsert } = await import('../server/services/planAndFestivalService.js');
-      serviceResult = await executeFestivalUpsert(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.festivalId;
-    } else if (action.tool === 'propose_meta_ad_draft') {
-      const { executeMetaAdDraftUpsert } = await import('../server/services/planAndFestivalService.js');
-      serviceResult = await executeMetaAdDraftUpsert(action.parameters, memberEmail, pendingActionId);
-      targetEntityId = serviceResult.adId;
-    } else {
-      throw new Error(`Unsupported propose tool "${action.tool}"`);
-    }
-
-    // Update pending action with before-state for 30-minute undo
-    await actionRef.update({
-      targetEntityId,
-      undoBeforeState: serviceResult.before || null,
-    });
-
-    res.json({
-      success: true,
-      message: serviceResult.summary || 'Action executed successfully.',
-      actionId: pendingActionId,
-      entity: action.catalog,
-      entityId: targetEntityId,
-      undoExpiresAt,
-      deepLink: `/${action.catalog === 'festival_events' ? 'planning' : action.catalog}?id=${targetEntityId}`,
-    });
-  } catch (err: any) {
-    console.error('[Assistant Confirm Error]', err);
-    res.status(400).json({ error: 'Confirmation failed', message: err.message || String(err) });
-  }
-});
-
-// 10c. Action Undo Endpoint (30-Minute Window)
-app.post('/api/assistant/undo', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const memberEmail = (req.memberEmail || '').toLowerCase().trim();
-    const { actionId } = req.body;
-
-    if (!actionId) {
-      res.status(400).json({ error: 'actionId is required.' });
-      return;
-    }
-
-    const { executeActionUndo } = await import('../server/services/undoService.js');
-    const result = await executeActionUndo(actionId, memberEmail);
-
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Assistant Undo Error]', err);
-    res.status(400).json({ error: 'Undo failed', message: err.message || String(err) });
-  }
-});
-
-// 10d. Prototype Voice Test Endpoint (Dev/Test only — strictly behind auth)
-app.post('/api/assistant/voice-test', standardRateLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const { audioBase64, mimeType } = req.body;
-  if (!audioBase64) {
-    res.status(400).json({ error: 'audioBase64 is required' });
-    return;
-  }
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: 'GEMINI_API_KEY is not configured on server' });
-    return;
-  }
-
-  const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
-  const startTime = Date.now();
-  try {
-    const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({ apiKey });
-
-    const prompt = `You are the audio transcription & operations assistant for Jaikrishna Industries (pooja manufacturer, Salem).
-Transcribe the spoken audio accurately. The speaker may use Tamil, Indian English, or mixed Tanglish.
-Key entity hints:
-- Team: Prajin (prajindezaa142@gmail.com), Srinivasan (srinisrkp@gmail.com), Sales Manager (jaikrishnaindustries1@gmail.com)
-- Lead Stages: New, Contacted, Interested, Sample sent, Negotiation, Ordered, Not interested
-- Task Types: Call, WhatsApp, Visit, Meta ads, Packing, Other
-
-Return a JSON object with:
-{
-  "transcript": "Exact transcription of spoken words in original script (Tamil or English)",
-  "languageDetected": "ta" | "en" | "mixed",
-  "entitiesDetected": {
-    "customer": string | null,
-    "leadStage": string | null,
-    "taskType": string | null,
-    "date": string | null,
-    "time": string | null
-  }
-}`;
-
-    const cleanMimeType = mimeType || 'audio/webm';
-    const response: any = await ai.models.generateContent({
-      model: modelName,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
-            {
-              inlineData: {
-                mimeType: cleanMimeType.split(';')[0],
-                data: audioBase64,
-              },
-            },
-          ],
-        },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
-
-    const elapsedMs = Date.now() - startTime;
-    const textOutput = response?.text || '{}';
-    let parsed: any = {};
-    try {
-      parsed = JSON.parse(textOutput);
-    } catch {
-      parsed = { transcript: textOutput };
-    }
-
-    res.json({
-      success: true,
-      modelUsed: modelName,
-      elapsedMs,
-      result: parsed,
-    });
-  } catch (err: any) {
-    console.error('Gemini Voice Test Error:', err);
-    res.status(500).json({
-      error: 'Audio processing failed',
-      details: err?.message || String(err),
-      elapsedMs: Date.now() - startTime,
+      reply: `[System Notice: Gemini API was unavailable or timed out; answered via Offline Business Rules]\n\n${smartReply}`,
     });
   }
 });

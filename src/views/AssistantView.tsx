@@ -17,34 +17,16 @@ import {
   Info,
   Loader2,
   Trash2,
-  ExternalLink,
-  RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useApp } from '../context/AppContext';
-import { ActionConfirmationCard } from '../components/assistant/ActionConfirmationCard';
-import { micService, MicPermissionState } from '../services/microphoneService';
-import { MicrophoneExplanationModal } from '../components/voice/MicrophoneExplanationModal';
-import { MicrophoneRecoveryModal } from '../components/voice/MicrophoneRecoveryModal';
-import { spokenVoiceController, SpokenClarification } from '../services/spokenVoiceController';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
   time: string;
-  pendingAction?: any;
-  executedResult?: {
-    success: boolean;
-    message: string;
-    actionId: string;
-    entity: string;
-    entityId: string;
-    undoExpiresAt?: string;
-    deepLink?: string;
-    undone?: boolean;
-  };
 }
 
 export const AssistantView: React.FC = () => {
@@ -57,7 +39,7 @@ export const AssistantView: React.FC = () => {
     {
       id: 'welcome',
       role: 'assistant',
-      text: 'Vanakkam! I am your Jaikrishna Industries business assistant powered by Google Gemini. You can ask questions or ask me to schedule follow-ups, update leads, log calls, or prepare daily plans. Every action operates under a strict PROPOSE-THEN-CONFIRM flow: I will show you a full preview card, and nothing is changed until you tap Confirm.',
+      text: 'Vanakkam! I am your Jaikrishna Industries business assistant powered by Google Gemini. You can ask me any question about your CRM leads, Meta ad campaign metrics, follow-up dates, orders, team members, or notification settings. Please note: I operate under a strict READ-ONLY guarantee and will never create, update, or delete data on your behalf.',
       time: '10:00 AM',
     },
   ]);
@@ -77,311 +59,51 @@ export const AssistantView: React.FC = () => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
 
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [speechLang, setSpeechLang] = useState<'ta-IN' | 'en-IN'>('en-IN');
-  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
-  const [micPermState, setMicPermState] = useState<MicPermissionState>(micService.getPermissionState());
-  const [showExplanationModal, setShowExplanationModal] = useState(false);
-  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
-  const [activeSpeechRec, setActiveSpeechRec] = useState<any>(null);
-  const [audioLevel, setAudioLevel] = useState<number>(0);
-  const [countdownRemaining, setCountdownRemaining] = useState<number>(60);
-  const countdownTimerRef = useRef<any>(null);
-
-  const [activeClarification, setActiveClarification] = useState<SpokenClarification | null>(null);
-  const [activePendingAction, setActivePendingAction] = useState<any | null>(null);
-  const [offerTextInput, setOfferTextInput] = useState<boolean>(false);
-  const [spokenReadbackNotice, setSpokenReadbackNotice] = useState<string | null>(null);
-  const voiceConfirmTimerRef = useRef<any>(null);
-
-  // Subscribe to central micService
-  useEffect(() => {
-    const unsub = micService.subscribeState((st) => {
-      setMicPermState(st);
-      if (st === 'granted') {
-        setShowRecoveryModal(false);
-        setVoiceError(null);
-      } else if (st === 'blocked' || st === 'denied') {
-        setShowRecoveryModal(true);
-      }
-    });
-    return () => {
-      unsub();
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    };
-  }, []);
-
-  // Helper to speak assistant answers or questions
-  const speakAssistantReply = (text: string, lang: 'en-IN' | 'ta-IN' = speechLang, onFinish?: () => void) => {
-    spokenVoiceController.speak(text, lang, { onEnd: onFinish });
-  };
-
-  // Voice toggle: Checks in-app explanation snooze before prompting
-  const handleToggleVoice = async () => {
-    setVoiceError(null);
-
-    // If already listening, stop capture immediately
-    if (isListening) {
-      if (activeSpeechRec) {
-        try {
-          activeSpeechRec.stop();
-        } catch {
-          // ignore
-        }
-        setActiveSpeechRec(null);
-      }
-      await micService.stopCapture();
-      setIsListening(false);
-      setAudioLevel(0);
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-      return;
-    }
-
-    // First use check: If permission not granted and not snoozed, show educational modal first
-    const hasSeenExplanation = localStorage.getItem('jaikrishna_mic_explanation_seen') === 'true';
-    if (!hasSeenExplanation && !micService.isSnoozed() && micPermState !== 'granted') {
-      setShowExplanationModal(true);
-      return;
-    }
-
-    await proceedWithVoiceCapture();
-  };
-
-  // Execution after user confirms or when already permitted
-  const proceedWithVoiceCapture = async () => {
-    setShowExplanationModal(false);
-
-    // Try Web Speech API first if supported
+  // Voice Input via Web Speech API
+  const handleToggleVoice = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const win = window as any;
     const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
 
-    if (SpeechRecognitionClass) {
-      try {
-        const recognition = new SpeechRecognitionClass();
-        setActiveSpeechRec(recognition);
-        recognition.lang = speechLang;
-        recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-
-        recognition.onstart = () => {
-          setIsListening(true);
-          setShowRecoveryModal(false);
-          setVoiceError(null);
-          startCountdownTimer();
-        };
-
-        recognition.onresult = (event: any) => {
-          let interimTranscript = '';
-          let finalTranscript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
-            } else {
-              interimTranscript += event.results[i][0].transcript;
-            }
-          }
-
-          const currentText = (finalTranscript || interimTranscript).trim();
-          if (currentText) {
-            setInput(currentText);
-          }
-
-          // If transcript has finished, evaluate spoken voice intents
-          if (finalTranscript.trim()) {
-            const intent = spokenVoiceController.parseVoiceIntent(finalTranscript.trim(), activePendingAction);
-
-            if (intent.isRepeat) {
-              spokenVoiceController.repeatLastSpoken();
-              return;
-            }
-            if (intent.isSlower) {
-              spokenVoiceController.speakSlower();
-              return;
-            }
-            if (intent.isCancellation) {
-              spokenVoiceController.stopSpeaking();
-              setActiveClarification(null);
-              if (activePendingAction) {
-                setActivePendingAction(null);
-                setSpokenReadbackNotice('Proposal cancelled by voice.');
-                speakAssistantReply('Proposal cancelled.', speechLang);
-              }
-              return;
-            }
-            if (intent.isConfirmation && activePendingAction) {
-              // Voice confirmation is permitted ONLY for low-risk actions without second confirm
-              if (activePendingAction.riskLevel === 'low' && !activePendingAction.requiresSecondConfirmation) {
-                // Find matching pending message
-                const msg = messages.find((m) => m.pendingAction?.id === activePendingAction.id);
-                if (msg) {
-                  handleConfirmAction(msg.id, activePendingAction.id, activePendingAction.parametersHash);
-                  speakAssistantReply('Confirmed and executed.', speechLang);
-                  setActivePendingAction(null);
-                  return;
-                }
-              } else {
-                speakAssistantReply('This action requires a physical tap on the confirmation card to confirm.', speechLang);
-                return;
-              }
-            }
-            if (intent.isCorrection && activePendingAction) {
-              // In-place correction of pending action
-              handleInPlaceVoiceCorrection(intent);
-              return;
-            }
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          console.warn('Speech recognition error event:', event.error);
-          setIsListening(false);
-          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-
-          if (event.error === 'not-allowed') {
-            setShowRecoveryModal(true);
-            setVoiceError('Microphone permission blocked. Follow the steps to enable it.');
-          } else if (event.error === 'network') {
-            setVoiceError('Speech network error. Switching to server audio capture...');
-            startCentralServiceAudioCapture();
-          } else if (event.error !== 'no-speech') {
-            setVoiceError(`Voice event: ${event.error}`);
-          }
-        };
-
-        recognition.onend = () => {
-          setIsListening(false);
-          setActiveSpeechRec(null);
-          if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        };
-
-        recognition.start();
-        return;
-      } catch (err) {
-        console.warn('SpeechRecognition failed, falling back to central micService:', err);
-      }
+    if (!SpeechRecognitionClass) {
+      alert('Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+      return;
     }
 
-    // Fallback: Use Central Microphone Service MediaRecorder + Gemini
-    startCentralServiceAudioCapture();
-  };
-
-  const startCountdownTimer = () => {
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    setCountdownRemaining(60);
-    countdownTimerRef.current = setInterval(() => {
-      setCountdownRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(countdownTimerRef.current);
-          handleToggleVoice();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const startCentralServiceAudioCapture = async () => {
-    const started = await micService.startCapture({
-      maxDurationSeconds: 60,
-      onLevelChange: (lvl) => setAudioLevel(lvl),
-      onTimeout: () => {
-        handleToggleVoice();
-      },
-      onError: (err, st) => {
-        setIsListening(false);
-        if (st === 'blocked' || st === 'denied') {
-          setShowRecoveryModal(true);
-        } else {
-          setVoiceError(`Microphone error: ${err.message || st}`);
-        }
-      },
-    });
-
-    if (started) {
-      setIsListening(true);
-      startCountdownTimer();
-    } else {
+    if (isListening) {
       setIsListening(false);
-      setShowRecoveryModal(true);
+      return;
     }
-  };
 
-  // Called when recording finishes to send audio to server if using MediaRecorder
-  const finishCentralAudioCapture = async () => {
-    const result = await micService.stopCapture();
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-    setIsListening(false);
-    setAudioLevel(0);
-
-    if (!result || !result.blob || result.blob.size === 0) return;
-
-    setIsTranscribingAudio(true);
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Audio = (reader.result as string).split(',')[1];
-        const token = user ? await user.getIdToken() : '';
-        const res = await fetch('/api/assistant/voice-test', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: token ? `Bearer ${token}` : '',
-          },
-          body: JSON.stringify({
-            audioBase64: base64Audio,
-            mimeType: result.mimeType,
-            expectedCategory: speechLang === 'ta-IN' ? 'Tamil' : 'English',
-          }),
-        });
+      const recognition = new SpeechRecognitionClass();
+      recognition.lang = 'en-IN';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
 
-        const data = await res.json();
-        if (data.success && data.transcript) {
-          setInput(data.transcript);
-        } else if (data.error) {
-          setVoiceError(data.error);
-        }
-        setIsTranscribingAudio(false);
+      recognition.onstart = () => {
+        setIsListening(true);
       };
-      reader.readAsDataURL(result.blob);
-    } catch (err: any) {
-      setVoiceError('Failed to transcribe audio: ' + (err.message || String(err)));
-      setIsTranscribingAudio(false);
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
+        setInput(transcript);
+        setIsListening(false);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (err) {
+      console.warn('Speech recognition error:', err);
+      setIsListening(false);
     }
-  };
-
-  // In-Place Voice Correction Handler (updates pending proposal card without starting over)
-  const handleInPlaceVoiceCorrection = async (intent: any) => {
-    if (!activePendingAction) return;
-
-    const action = { ...activePendingAction };
-    const field = intent.field;
-    const val = intent.newValue;
-
-    let updatedSummary = action.preview?.summary || '';
-    if (field === 'time') {
-      action.preview.after.startTime = val;
-      updatedSummary += ` (Time updated to ${val})`;
-      speakAssistantReply(`Updated time to ${val}. Details are on the screen.`, speechLang);
-    } else if (field === 'date') {
-      action.preview.after.date = val;
-      updatedSummary += ` (Date changed to ${val})`;
-      speakAssistantReply(`Changed date to ${val}. Details are on the screen.`, speechLang);
-    } else if (field === 'assignedTo') {
-      action.preview.after.assignedTo = val;
-      const memberName = val.includes('sales') ? 'Sales Manager' : val.includes('srini') ? 'Owner' : 'Admin';
-      updatedSummary += ` (Reassigned to ${memberName})`;
-      speakAssistantReply(`Reassigned to ${memberName}. Details are on the screen.`, speechLang);
-    }
-
-    action.preview.summary = updatedSummary;
-    setActivePendingAction(action);
-
-    // Update message card in conversation
-    setMessages((prev) =>
-      prev.map((m) => (m.pendingAction?.id === action.id ? { ...m, pendingAction: action } : m))
-    );
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -539,37 +261,10 @@ export const AssistantView: React.FC = () => {
         role: 'assistant',
         text: replyText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        pendingAction: data?.pendingAction,
       };
 
       setMessages((prev) => [...prev, botMsg]);
-
-      // Spoken Readback & 5-Second Voice Confirmation Window
-      if (data?.pendingAction) {
-        setActivePendingAction(data.pendingAction);
-        const spokenSummary = `I prepared a proposal to ${data.pendingAction.preview?.summary}. ${
-          data.pendingAction.riskLevel === 'low' && !data.pendingAction.requiresSecondConfirmation
-            ? 'Say confirm to execute, or tell me changes like change time to 5 PM.'
-            : 'This is a higher risk action. Please review and tap Confirm on screen.'
-        }`;
-        setSpokenReadbackNotice(spokenSummary);
-
-        speakAssistantReply(spokenSummary, speechLang, () => {
-          // If low-risk, briefly re-arm voice capture for 5 seconds to listen for spoken confirmation
-          if (data.pendingAction.riskLevel === 'low' && !data.pendingAction.requiresSecondConfirmation) {
-            handleToggleVoice();
-            if (voiceConfirmTimerRef.current) clearTimeout(voiceConfirmTimerRef.current);
-            voiceConfirmTimerRef.current = setTimeout(() => {
-              if (isListening) handleToggleVoice();
-            }, 5000);
-          }
-        });
-      } else if (replyText) {
-        // Speak short textual reply (summarized, not long list)
-        const shortReply = replyText.length > 150 ? replyText.slice(0, 150) + '... details are on the screen.' : replyText;
-        speakAssistantReply(shortReply, speechLang);
-      }
-    } catch (err: any) {
+    } catch (err) {
       console.warn('API error, falling back to local assistant engine:', err);
       // Fallback: Generate intelligent contextual response directly in the client if backend is down/unreachable
       const localReply = getClientAssistantFallback(q.trim(), contextData);
@@ -580,108 +275,18 @@ export const AssistantView: React.FC = () => {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, botMsg]);
-
-      // Check failure count
-      const failureStatus = spokenVoiceController.recordFailure();
-      if (failureStatus.shouldOfferTextInput) {
-        setOfferTextInput(true);
-        speakAssistantReply(
-          'I am having trouble understanding your speech clearly. Please use text typing below.',
-          speechLang
-        );
-      }
     } finally {
       setThinking(false);
     }
   };
 
-  const handleConfirmAction = async (msgId: string, actionId: string, parametersHash: string) => {
-    try {
-      const idToken = user ? await user.getIdToken() : '';
-      const res = await fetch('/api/assistant/confirm', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-        },
-        body: JSON.stringify({ pendingActionId: actionId, parametersHash }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || data.error || 'Failed to confirm action');
-      }
-
-      // Update message state
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === msgId) {
-            return {
-              ...m,
-              pendingAction: undefined,
-              executedResult: {
-                success: true,
-                message: data.message,
-                actionId,
-                entity: data.entity,
-                entityId: data.entityId,
-                undoExpiresAt: data.undoExpiresAt,
-                deepLink: data.deepLink,
-              },
-            };
-          }
-          return m;
-        })
-      );
-    } catch (err: any) {
-      alert(`Action execution failed: ${err.message || String(err)}`);
-    }
-  };
-
-  const handleUndoAction = async (msgId: string, actionId: string) => {
-    try {
-      const idToken = user ? await user.getIdToken() : '';
-      const res = await fetch('/api/assistant/undo', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-        },
-        body: JSON.stringify({ actionId }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || data.error || 'Failed to undo action');
-      }
-
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id === msgId && m.executedResult) {
-            return {
-              ...m,
-              executedResult: {
-                ...m.executedResult,
-                undone: true,
-                message: `Action undone: ${data.message}`,
-              },
-            };
-          }
-          return m;
-        })
-      );
-    } catch (err: any) {
-      alert(`Undo failed: ${err.message || String(err)}`);
-    }
-  };
-
   const sampleQuestions = [
-    'Schedule follow-up call with Ramesh tomorrow at 4pm',
-    'Add a new customer named Salem Pooja Stores with phone 9876543210',
     'Which ad had the lowest cost per conversation?',
     'What did the last Diwali ad spend and earn?',
-    'Save daily operations plan for today with target: 10 customer dispatches',
-    'Add festival event Navaratri Special Pooja on 2026-10-15',
+    'Which ads are waiting for results?',
+    'What is planned next month?',
+    'Compare my last 3 ads.',
+    'How many new customers from Salem do we have?',
   ];
 
   return (
@@ -697,8 +302,8 @@ export const AssistantView: React.FC = () => {
               <h2 className="font-bold text-stone-900 text-sm font-display">
                 Jaikrishna Gemini Operations Assistant
               </h2>
-              <span className="flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-200">
-                <ShieldCheck className="w-3 h-3 text-amber-700" /> Propose-Then-Confirm
+              <span className="flex items-center gap-1 text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                <ShieldCheck className="w-3 h-3" /> Strict Read-Only
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
@@ -747,61 +352,6 @@ export const AssistantView: React.FC = () => {
                 }`}
               >
                 <div className="whitespace-pre-wrap leading-relaxed">{m.text}</div>
-
-                {/* Proposed Action Confirmation Card */}
-                {m.pendingAction && !isUser && (
-                  <ActionConfirmationCard
-                    pendingAction={m.pendingAction}
-                    onConfirm={async (actionId, hash) => {
-                      await handleConfirmAction(m.id, actionId, hash);
-                    }}
-                    onCancel={(actionId) => {
-                      setMessages((prev) =>
-                        prev.map((msg) =>
-                          msg.id === m.id ? { ...msg, pendingAction: undefined } : msg
-                        )
-                      );
-                    }}
-                  />
-                )}
-
-                {/* Executed Result with Deep Link and 30-min Undo Button */}
-                {m.executedResult && !isUser && (
-                  <div className="mt-2.5 p-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-stone-800 space-y-1.5">
-                    <div className="flex items-center gap-1.5 font-semibold text-emerald-900">
-                      <Check className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>{m.executedResult.message}</span>
-                    </div>
-
-                    <div className="flex items-center gap-3 pt-1 text-[11px]">
-                      {m.executedResult.deepLink && !m.executedResult.undone && (
-                        <a
-                          href={m.executedResult.deepLink}
-                          className="flex items-center gap-1 text-[#881337] font-semibold hover:underline"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>View Record</span>
-                        </a>
-                      )}
-
-                      {!m.executedResult.undone && (
-                        <button
-                          onClick={() => handleUndoAction(m.id, m.executedResult!.actionId)}
-                          className="flex items-center gap-1 text-stone-600 hover:text-stone-900 font-medium transition-colors"
-                          title="Undo within 30 minutes"
-                        >
-                          <RotateCcw className="w-3 h-3 text-stone-500" />
-                          <span>Undo Action</span>
-                        </button>
-                      )}
-
-                      {m.executedResult.undone && (
-                        <span className="text-stone-500 italic">Action has been undone.</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-
                 <div
                   className={`flex items-center justify-between mt-2 pt-1 text-[10px] ${
                     isUser ? 'text-amber-200/80 border-t border-white/10' : 'text-stone-400 border-t border-stone-200/60'
@@ -862,105 +412,6 @@ export const AssistantView: React.FC = () => {
         ))}
       </div>
 
-      {/* Spoken Clarification Card (Ambiguous customer name / Missing field) */}
-      {activeClarification && (
-        <div className="px-4 py-3 bg-indigo-50 border-t border-indigo-200 text-indigo-950 text-xs animate-in fade-in space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 font-bold text-indigo-900">
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              <span>{activeClarification.spokenPrompt}</span>
-            </div>
-            <button
-              onClick={() => setActiveClarification(null)}
-              className="text-stone-400 hover:text-stone-600 text-xs font-semibold px-1"
-            >
-              ✕
-            </button>
-          </div>
-
-          {activeClarification.options && activeClarification.options.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto pt-1">
-              <span className="text-[11px] font-semibold text-indigo-800">Select or speak:</span>
-              {activeClarification.options.map((opt, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    handleSend(opt);
-                    setActiveClarification(null);
-                  }}
-                  className="px-3 py-1 rounded-lg bg-white border border-indigo-200 text-indigo-900 font-medium text-xs hover:border-indigo-600 transition-colors shrink-0 shadow-2xs"
-                >
-                  {opt}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Repeated Misunderstanding Fallback Notice */}
-      {offerTextInput && (
-        <div className="px-4 py-2 bg-amber-100 border-t border-amber-300 text-amber-900 text-xs flex items-center justify-between animate-in fade-in">
-          <div className="flex items-center gap-2 font-medium">
-            <Info className="w-4 h-4 text-amber-700 shrink-0" />
-            <span>Voice input had trouble hearing your words clearly. Please type your message in the box below.</span>
-          </div>
-          <button
-            onClick={() => setOfferTextInput(false)}
-            className="text-amber-800 hover:text-amber-950 text-xs font-bold px-1"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Voice Error Banner */}
-      {voiceError && (
-        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-amber-800 text-xs flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Info className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span>{voiceError}</span>
-          </div>
-          <button
-            onClick={() => setVoiceError(null)}
-            className="text-stone-400 hover:text-stone-600 text-xs font-semibold px-1"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Live Active Recording Indicator with Audio Meter and Countdown */}
-      {isListening && (
-        <div className="px-4 py-2 bg-rose-50 border-t border-rose-200 flex items-center justify-between text-xs animate-in fade-in">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
-            <span className="font-bold text-rose-900">
-              Listening ({countdownRemaining}s remaining)
-            </span>
-            <span className="text-stone-500 text-[11px]">
-              Tap mic or red button to finish
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="w-24 h-2 bg-stone-200 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-rose-600 transition-all duration-75"
-                style={{ width: `${Math.max(10, Math.min(100, audioLevel * 100))}%` }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={handleToggleVoice}
-              className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold text-[10px] hover:bg-rose-700 transition-colors"
-            >
-              Done Speaking
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Input Bar with Voice Input */}
       <div className="p-3 border-t border-stone-200 bg-white">
         <form
@@ -970,16 +421,6 @@ export const AssistantView: React.FC = () => {
           }}
           className="flex items-center gap-2"
         >
-          {/* Language selector toggle for voice */}
-          <button
-            type="button"
-            onClick={() => setSpeechLang((prev) => (prev === 'en-IN' ? 'ta-IN' : 'en-IN'))}
-            className="text-[10px] font-semibold px-2 py-1.5 rounded-lg border border-stone-200 bg-stone-50 text-stone-600 hover:bg-stone-100 transition-colors shrink-0"
-            title="Switch voice input language (English / Tamil)"
-          >
-            {speechLang === 'en-IN' ? 'EN' : 'தமிழ்'}
-          </button>
-
           {/* Voice input button */}
           <button
             type="button"
@@ -987,25 +428,11 @@ export const AssistantView: React.FC = () => {
             className={`p-2 rounded-xl border transition-colors ${
               isListening
                 ? 'bg-rose-600 text-white border-rose-600 animate-pulse'
-                : isTranscribingAudio
-                ? 'bg-amber-100 text-amber-700 border-amber-300 animate-pulse'
                 : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200'
             }`}
-            title={
-              isListening
-                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'} (${countdownRemaining}s left)... click to stop`
-                : isTranscribingAudio
-                ? 'Transcribing audio via Gemini...'
-                : `Click to speak in ${speechLang === 'en-IN' ? 'English' : 'Tamil'}`
-            }
+            title={isListening ? 'Listening... click to stop' : 'Click to speak (Voice Input)'}
           >
-            {isTranscribingAudio ? (
-              <Loader2 className="w-4 h-4 animate-spin text-amber-700" />
-            ) : isListening ? (
-              <MicOff className="w-4 h-4" />
-            ) : (
-              <Mic className="w-4 h-4" />
-            )}
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
 
           <input
@@ -1013,9 +440,7 @@ export const AssistantView: React.FC = () => {
             type="text"
             placeholder={
               isListening
-                ? `Listening in ${speechLang === 'en-IN' ? 'English' : 'Tamil'} (${countdownRemaining}s)... speak naturally`
-                : isTranscribingAudio
-                ? 'Processing voice with Gemini audio understanding...'
+                ? 'Listening to your voice in English or Tamil...'
                 : 'Ask Gemini about leads, orders, schedules, or team settings (Enter to send)...'
             }
             value={input}
@@ -1034,32 +459,6 @@ export const AssistantView: React.FC = () => {
           </button>
         </form>
       </div>
-
-      {/* First-Use Educational Explanation Modal */}
-      <MicrophoneExplanationModal
-        isOpen={showExplanationModal}
-        onAllow={async () => {
-          localStorage.setItem('jaikrishna_mic_explanation_seen', 'true');
-          micService.clearSnooze();
-          setShowExplanationModal(false);
-          await proceedWithVoiceCapture();
-        }}
-        onNotNow={() => {
-          micService.setSnooze(7);
-          setShowExplanationModal(false);
-        }}
-      />
-
-      {/* Platform-Specific Recovery Guidance Modal */}
-      <MicrophoneRecoveryModal
-        isOpen={showRecoveryModal}
-        state={micPermState}
-        onClose={() => setShowRecoveryModal(false)}
-        onPermissionGranted={() => {
-          setShowRecoveryModal(false);
-          proceedWithVoiceCapture();
-        }}
-      />
     </div>
   );
 };

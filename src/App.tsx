@@ -20,7 +20,6 @@ import { TrashView } from './views/TrashView';
 import { SettingsView } from './views/SettingsView';
 import { AssistantView } from './views/AssistantView';
 import { AutomationRulesView } from './views/AutomationRulesView';
-import { VoiceTestBenchView } from './views/VoiceTestBenchView';
 
 import { setupForegroundMessageListener, getFcmToken, syncDeviceWithServer, getNotificationPermissionState } from './lib/fcm';
 
@@ -52,7 +51,7 @@ const MainAppContent: React.FC = () => {
     const handleUrlRoute = () => {
       const searchParams = new URLSearchParams(window.location.search);
       const mod = searchParams.get('module') as ActiveModule | null;
-      if (mod && ['dashboard', 'customers', 'tasks', 'planning', 'orders', 'automations', 'trash', 'settings', 'assistant', 'voice_test'].includes(mod)) {
+      if (mod && ['dashboard', 'customers', 'tasks', 'planning', 'orders', 'automations', 'trash', 'settings', 'assistant'].includes(mod)) {
         setCurrentModule(mod);
       }
     };
@@ -118,7 +117,6 @@ const MainAppContent: React.FC = () => {
       {currentModule === 'trash' && <TrashView />}
       {currentModule === 'settings' && <SettingsView />}
       {currentModule === 'assistant' && <AssistantView />}
-      {currentModule === 'voice_test' && <VoiceTestBenchView />}
     </AppShell>
   );
 };

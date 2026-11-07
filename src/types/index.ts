@@ -643,8 +643,7 @@ export type ActiveModule =
   | 'trash'
   | 'settings'
   | 'assistant'
-  | 'automations'
-  | 'voice_test';
+  | 'automations';
 
 export type LanguageCode = 'en' | 'ta';
 

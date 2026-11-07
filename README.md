@@ -54,43 +54,6 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## AI Operations Assistant (Propose-Then-Confirm)
-
-The AI Assistant operates under a strict **Propose-Then-Confirm** model. It has **zero direct write tools** in its model schema and cannot alter records on its own.
-
-### What the AI Assistant CAN Do:
-1. **Tasks**: Propose scheduled follow-up calls, visits, packing, or dispatch tasks with automatic Asia/Kolkata date resolution (defaults to 10:00 AM – 10:30 AM IST).
-2. **Customers**: Propose adding wholesale/retail leads, updating contact persons or stages (`New`, `Contacted`, `Interested`, `Sample sent`, `Negotiation`, `Ordered`, `Not interested`), setting next follow-up dates, and logging call outcomes.
-3. **Planning**: Propose daily morning briefings and weekly target plans.
-4. **Festivals & Meta Ads**: Propose festival calendar events and Meta ad planning drafts.
-
-### What the AI Assistant CANNOT Do (Blocked by Scope):
-* Delete or move records to Trash directly.
-* Restore records or run bulk imports.
-* Process orders, accept payments, modify stock or pricing.
-* Send direct messages (WhatsApp, Email, SMS, Push) to customers.
-* Modify automation rules, team members, or system settings.
-
-### How Undo Works:
-* Every executed action captures the before-state and creates an audit entry in `activity_logs` as `by AI assistant for {member}`.
-* The member has a **30-minute undo window**.
-* **Concurrency Protection**: If another member has modified the record since the AI action, undo is safely blocked to protect human edits.
-
-### Privacy Notice:
-* Spoken audio and customer notes are processed through the **private enterprise Gemini tier**.
-* Voice recordings are processed in memory and **never saved to disk or stored in Firestore**.
-* Customer data is never used to train public AI models.
-
-### Microphone Permission & Audio Capture System:
-* **Central Service (`src/services/microphoneService.ts`)**: Single authoritative module for `getUserMedia` streams, permission state tracking, AnalyserNode audio meter, and safe track cleanup on cancel, route change, blur, or background.
-* **Permissions-Policy**: Configured on Vercel as `camera=(), microphone=(self), geolocation=(), payment=()`, guaranteeing that only the canonical domain `jaikrishnabizzhub.in` can access the audio stream.
-* **Educational Explanation Modal**: Displays first-use sheet explaining why the mic is needed, zero permanent storage, Gemini processing, and 7-day snooze for "Not now".
-* **Recovery Guidance**: Platform-detected step-by-step unblock instructions for Desktop Chrome/Edge, Android Chrome & OS app permissions, and iPhone Safari / Home Screen PWA. Includes a "Check again" live verification button.
-* **Audio Track Release & Safety**: Guaranteed track closure on all exit paths, countdown timer (default 60s), and level meter visualization so the microphone is never open silently.
-* **Settings & Diagnostics**: Available in `SettingsView` with live input device selector, 3-second local loopback test (100% in-memory, never uploaded), and complete hardware report with "Copy diagnostics" button.
-
----
-
 ## Deployment
 
 * **Frontend & Serverless API**: Connect GitHub repository directly to **Vercel** with the Vite preset.
@@ -101,4 +64,3 @@ The AI Assistant operates under a strict **Propose-Then-Confirm** model. It has 
   ```bash
   firebase deploy --only firestore:rules,firestore:indexes,functions
   ```
-
