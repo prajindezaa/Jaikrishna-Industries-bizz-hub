@@ -11,6 +11,8 @@ export interface ColumnMapping {
   companyName: string;
   contactPerson: string;
   phone: string;
+  country?: string;
+  state?: string;
   district?: string;
   city: string;
   area: string;
@@ -65,7 +67,9 @@ export function autoDetectColumnMapping(headers: string[]): ColumnMapping {
     companyName: findMatch(['company name', 'company', 'shop name', 'shop', 'business name', 'store name']),
     contactPerson: findMatch(['contact person', 'contact', 'name', 'person', 'owner name']),
     phone: findMatch(['phone', 'mobile', 'whatsapp', 'contact number', 'phone number', 'cell']),
-    district: findMatch(['district', 'tn district', 'region']),
+    country: findMatch(['country', 'nation']),
+    state: findMatch(['state', 'province', 'region']),
+    district: findMatch(['district', 'tn district', 'county']),
     city: findMatch(['city', 'place', 'location', 'town']),
     area: findMatch(['area', 'street', 'locality', 'address']),
     groupName: findMatch(['customer group', 'group', 'group name', 'segment', 'customer type', 'type', 'category']),
@@ -222,9 +226,15 @@ export function validateAndMapRows(
     const matchedStage = validStages.find((s) => s.toLowerCase() === rawStage.toLowerCase());
     const finalStage: any = matchedStage || 'New';
 
-    // Parse district from file row if mapped, otherwise fallback to city
+    // Parse state and country from file row if mapped (default Tamil Nadu, India)
+    const rowCountry = mapping.country ? String(row[mapping.country] || '').trim() : '';
+    const finalCountry = rowCountry || 'India';
+    const rowState = mapping.state ? String(row[mapping.state] || '').trim() : '';
+    const finalState = rowState || (finalCountry === 'India' ? 'Tamil Nadu' : '');
+
+    // Parse district from file row if mapped, otherwise empty or fallback
     const rowDistrict = mapping.district ? String(row[mapping.district] || '').trim() : '';
-    const finalDistrict = rowDistrict || city || 'Salem';
+    const finalDistrict = rowDistrict || (city ? city : '');
 
     // Parse next follow up date if mapped
     const rawFollowUp = mapping.nextFollowUpDate ? String(row[mapping.nextFollowUpDate] || '').trim() : '';
@@ -241,7 +251,7 @@ export function validateAndMapRows(
       contactPerson: contact || company,
       phone: normalized,
       whatsapp: normalized,
-      place: { area, city, district: finalDistrict, state: 'Tamil Nadu' },
+      place: { area, city, district: finalDistrict, state: finalState, country: finalCountry },
       groupId: resolvedGroupId,
       groupName: resolvedGroupName,
       groupAssignedAt: resolvedGroupId ? now : undefined,

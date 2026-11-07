@@ -31,7 +31,7 @@ import {
   CreativeAsset,
   FestivalEvent,
 } from '../../types';
-import { TAMIL_NADU_DISTRICTS } from '../../lib/districts';
+import { INDIA_STATES, getDistrictsForState } from '../../lib/districts';
 import { formatINR, getPreparationStartDate } from '../../lib/meta-ads-utils';
 
 interface MetaAdPlanningModalProps {
@@ -88,6 +88,7 @@ export const MetaAdPlanningModal: React.FC<MetaAdPlanningModalProps> = ({
 
   // Target customers
   const [targetCustomerTypes, setTargetCustomerTypes] = useState<string[]>(['Distributor', 'Wholesaler']);
+  const [targetState, setTargetState] = useState<string>('Tamil Nadu');
   const [targetPlaces, setTargetPlaces] = useState<string[]>(['Salem', 'Coimbatore']);
   const [targetNotes, setTargetNotes] = useState('');
 
@@ -607,11 +608,26 @@ export const MetaAdPlanningModal: React.FC<MetaAdPlanningModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-stone-800 mb-1.5">
-                  Target Districts (Tamil Nadu 38 Districts)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-stone-800">
+                    Target State &amp; Districts
+                  </label>
+                  <select
+                    value={targetState}
+                    onChange={(e) => {
+                      setTargetState(e.target.value);
+                    }}
+                    className="text-[10px] px-2 py-0.5 border border-stone-300 rounded bg-white text-stone-700"
+                  >
+                    {INDIA_STATES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 border border-stone-200 rounded-lg bg-stone-50/50">
-                  {TAMIL_NADU_DISTRICTS.map(dist => {
+                  {getDistrictsForState(targetState).map(dist => {
                     const isSelected = targetPlaces.includes(dist);
                     return (
                       <button
@@ -634,7 +650,7 @@ export const MetaAdPlanningModal: React.FC<MetaAdPlanningModalProps> = ({
                   })}
                 </div>
                 <span className="text-[10px] text-stone-500 block mt-1">
-                  Selected: {targetPlaces.length} districts
+                  Selected: {targetPlaces.length} districts in {targetState}
                 </span>
               </div>
 

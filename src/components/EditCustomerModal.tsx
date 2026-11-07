@@ -20,7 +20,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Customer, CustomerType, CustomerStatus, LeadStage, LeadSource } from '../types';
-import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
+import { COUNTRIES, INDIA_STATES, getDistrictsForState } from '../lib/districts';
 import { normalizePhone } from '../lib/phone';
 import { CustomerGroupSelect } from './customers/CustomerGroupSelect';
 import { useApp } from '../context/AppContext';
@@ -50,9 +50,10 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   const [gstin, setGstin] = useState('');
   const [address, setAddress] = useState('');
   const [area, setArea] = useState('');
-  const [city, setCity] = useState('Salem');
-  const [district, setDistrict] = useState('Salem');
+  const [city, setCity] = useState('');
+  const [district, setDistrict] = useState('');
   const [state, setState] = useState('Tamil Nadu');
+  const [country, setCountry] = useState('India');
   const [groupId, setGroupId] = useState<string | null>(null);
   const [status, setStatus] = useState<CustomerStatus>('New customer');
   const [leadStage, setLeadStage] = useState<LeadStage>('New');
@@ -75,9 +76,10 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
       setGstin(customer.gstin || '');
       setAddress(customer.address || '');
       setArea(customer.place?.area || '');
-      setCity(customer.place?.city || customer.city || 'Salem');
-      setDistrict(customer.place?.district || customer.place?.city || customer.city || 'Salem');
+      setCity(customer.place?.city || customer.city || '');
+      setDistrict(customer.place?.district || '');
       setState(customer.place?.state || 'Tamil Nadu');
+      setCountry(customer.place?.country || 'India');
       setGroupId(customer.groupId || null);
       setStatus(customer.status || 'New customer');
       setLeadStage(customer.leadStage || 'New');
@@ -160,6 +162,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
           city: city.trim(),
           district: district.trim(),
           state: state.trim() || 'Tamil Nadu',
+          country: country.trim() || 'India',
         },
         groupId: groupId || null,
         groupName: groupId ? (customerGroups.find((g) => g.id === groupId)?.name || 'Group') : 'Ungrouped',
@@ -339,36 +342,95 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block font-semibold text-stone-700 mb-1">Area / Locality</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Suramangalam"
-                  value={area}
-                  onChange={(e) => setArea(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-stone-700 mb-1">District (38 TN)</label>
+                <label className="block font-semibold text-stone-700 mb-1">Country</label>
                 <select
-                  value={district}
+                  value={country}
                   onChange={(e) => {
-                    setDistrict(e.target.value);
-                    if (!city || city === district) {
-                      setCity(e.target.value);
+                    const newCountry = e.target.value;
+                    setCountry(newCountry);
+                    if (newCountry !== 'India') {
+                      setState('');
+                      setDistrict('');
+                    } else {
+                      setState('Tamil Nadu');
                     }
                   }}
                   className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
                 >
-                  {TAMIL_NADU_DISTRICTS.map((dist) => (
-                    <option key={dist} value={dist}>
-                      {dist}
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.name}>
+                      {c.name}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">State / Province</label>
+                {country === 'India' ? (
+                  <select
+                    value={state}
+                    onChange={(e) => {
+                      const newState = e.target.value;
+                      setState(newState);
+                      setDistrict(''); // no default district
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                  >
+                    {INDIA_STATES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="e.g. State / Province"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                  />
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">District</label>
+                {country === 'India' && getDistrictsForState(state).length > 0 ? (
+                  <select
+                    value={district}
+                    onChange={(e) => {
+                      const selectedDist = e.target.value;
+                      setDistrict(selectedDist);
+                      if (!city) {
+                        setCity(selectedDist);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                  >
+                    <option value="">-- Select District --</option>
+                    {getDistrictsForState(state).map((dist) => (
+                      <option key={dist} value={dist}>
+                        {dist}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="e.g. District / County"
+                    value={district}
+                    onChange={(e) => {
+                      setDistrict(e.target.value);
+                      if (!city) setCity(e.target.value);
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                  />
+                )}
               </div>
 
               <div>
@@ -378,6 +440,17 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
                   placeholder="e.g. Salem"
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-700 mb-1">Area / Locality</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Suramangalam"
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
                 />
               </div>

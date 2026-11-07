@@ -44,7 +44,7 @@ import { LogOutcomeModal } from '../components/LogOutcomeModal';
 import { CustomerGroupSelect } from '../components/customers/CustomerGroupSelect';
 import { CustomerGroupBadge } from '../components/customers/CustomerGroupBadge';
 import { GroupOverviewCards } from '../components/customers/GroupOverviewCards';
-import { TAMIL_NADU_DISTRICTS } from '../lib/districts';
+import { COUNTRIES, INDIA_STATES, getDistrictsForState } from '../lib/districts';
 import { useAuth } from '../context/AuthContext';
 
 interface CustomersViewProps {
@@ -131,7 +131,10 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
   const [companyName, setCompanyName] = useState('');
   const [contactPerson, setContactPerson] = useState('');
   const [rawPhone, setRawPhone] = useState('');
-  const [placeCity, setPlaceCity] = useState('Salem');
+  const [placeCountry, setPlaceCountry] = useState('India');
+  const [placeState, setPlaceState] = useState('Tamil Nadu');
+  const [placeDistrict, setPlaceDistrict] = useState('');
+  const [placeCity, setPlaceCity] = useState('');
   const [formGroupId, setFormGroupId] = useState<string | null>(null);
   const [status, setStatus] = useState<CustomerStatus>('New customer');
   const [formLeadStage, setFormLeadStage] = useState<LeadStage>('New');
@@ -246,7 +249,13 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
       contactPerson: contactPerson.trim() || companyName.trim(),
       phone: normalized,
       whatsapp: normalized,
-      place: { area: '', city: placeCity || 'Salem', district: placeCity || 'Salem', state: 'Tamil Nadu' },
+      place: {
+        area: '',
+        city: placeCity.trim() || placeDistrict.trim(),
+        district: placeDistrict.trim(),
+        state: placeState.trim() || 'Tamil Nadu',
+        country: placeCountry.trim() || 'India',
+      },
       groupId: formGroupId || null,
       groupName: resolvedGroup ? resolvedGroup.name : (formGroupId ? 'Unknown Group' : 'Ungrouped'),
       groupAssignedAt: formGroupId ? now : null,
@@ -525,7 +534,10 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
         c.companyName.toLowerCase().includes(search.toLowerCase()) ||
         c.contactPerson.toLowerCase().includes(search.toLowerCase()) ||
         c.phone.includes(search) ||
-        (c.place?.city && c.place.city.toLowerCase().includes(search.toLowerCase()));
+        (c.place?.city && c.place.city.toLowerCase().includes(search.toLowerCase())) ||
+        (c.place?.district && c.place.district.toLowerCase().includes(search.toLowerCase())) ||
+        (c.place?.state && c.place.state.toLowerCase().includes(search.toLowerCase())) ||
+        (c.place?.country && c.place.country.toLowerCase().includes(search.toLowerCase()));
 
       const matchesStatus = selectedStatus === 'All' || c.status === selectedStatus;
       const matchesCity = selectedCity === 'All' || c.place?.city === selectedCity;
@@ -1085,11 +1097,19 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                       <td className="py-3 px-3">
                         <div className="flex items-center gap-1 text-stone-700">
                           <MapPin className="w-3 h-3 text-stone-400 shrink-0" />
-                          <span className="font-medium text-stone-800">{cust.place?.city || 'Salem'}</span>
+                          <span className="font-medium text-stone-800">
+                            {cust.place?.district || cust.place?.city || cust.place?.state || 'Unknown'}
+                          </span>
                         </div>
-                        {cust.place?.area && (
-                          <div className="text-[10px] text-stone-700 ml-4">{cust.place.area}</div>
-                        )}
+                        <div className="text-[10px] text-stone-500 ml-4 flex items-center gap-1">
+                          {cust.place?.city && cust.place.city !== cust.place.district && (
+                            <span>{cust.place.city}, </span>
+                          )}
+                          <span>{cust.place?.state || 'Tamil Nadu'}</span>
+                          {cust.place?.country && cust.place.country !== 'India' && (
+                            <span className="text-stone-400">({cust.place.country})</span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Customer Group (replaces legacy customerType) */}
@@ -1395,21 +1415,107 @@ export const CustomersView: React.FC<CustomersViewProps> = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">District / Hub (38 TN Districts)</label>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">Country</label>
                   <select
-                    value={placeCity}
-                    onChange={(e) => setPlaceCity(e.target.value)}
+                    value={placeCountry}
+                    onChange={(e) => {
+                      const newCountry = e.target.value;
+                      setPlaceCountry(newCountry);
+                      if (newCountry !== 'India') {
+                        setPlaceState('');
+                        setPlaceDistrict('');
+                      } else {
+                        setPlaceState('Tamil Nadu');
+                      }
+                    }}
                     className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
                   >
-                    {TAMIL_NADU_DISTRICTS.map((dist) => (
-                      <option key={dist} value={dist}>
-                        {dist}
+                    {COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.name}>
+                        {c.name}
                       </option>
                     ))}
                   </select>
                 </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">State / Province</label>
+                  {placeCountry === 'India' ? (
+                    <select
+                      value={placeState}
+                      onChange={(e) => {
+                        const newState = e.target.value;
+                        setPlaceState(newState);
+                        setPlaceDistrict(''); // No default district
+                      }}
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                    >
+                      {INDIA_STATES.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="e.g. State / Province"
+                      value={placeState}
+                      onChange={(e) => setPlaceState(e.target.value)}
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">District / Hub</label>
+                  {placeCountry === 'India' && getDistrictsForState(placeState).length > 0 ? (
+                    <select
+                      value={placeDistrict}
+                      onChange={(e) => {
+                        setPlaceDistrict(e.target.value);
+                        if (!placeCity) setPlaceCity(e.target.value);
+                      }}
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden"
+                    >
+                      <option value="">-- Select District --</option>
+                      {getDistrictsForState(placeState).map((dist) => (
+                        <option key={dist} value={dist}>
+                          {dist}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="e.g. District / County"
+                      value={placeDistrict}
+                      onChange={(e) => {
+                        setPlaceDistrict(e.target.value);
+                        if (!placeCity) setPlaceCity(e.target.value);
+                      }}
+                      className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 mb-1">City / Town</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Town / City name"
+                    value={placeCity}
+                    onChange={(e) => setPlaceCity(e.target.value)}
+                    className="w-full text-xs px-3 py-2 rounded-lg border border-stone-300 focus:outline-hidden focus:border-[#881337]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
 
                 <div>
                   <label className="block text-xs font-semibold text-stone-700 mb-1">

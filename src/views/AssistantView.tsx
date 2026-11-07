@@ -526,9 +526,10 @@ function getClientAssistantFallback(message: string, context: any): string {
   if (q.includes('salem') || q.includes('district') || q.includes('hub') || q.includes('customer')) {
     const salemCustomers = customers.filter((c: any) => 
       (c.city && c.city.toLowerCase().includes('salem')) || 
-      (c.place?.city && c.place.city.toLowerCase().includes('salem'))
+      (c.place?.city && c.place.city.toLowerCase().includes('salem')) ||
+      (c.place?.district && c.place.district.toLowerCase().includes('salem'))
     );
-    return `Vanakkam! Based on your live Jaikrishna Industries workspace, you have ${summary.totalCustomers} total customers loaded across Tamil Nadu districts (including ${salemCustomers.length} in Salem). You can view and manage all 38 Tamil Nadu districts directly in the Customers Hub.`;
+    return `Vanakkam! Based on your live Jaikrishna Industries workspace, you have ${summary.totalCustomers} total customers loaded across all states and districts (including ${salemCustomers.length} in Salem). You can view and manage all customer locations directly in the Customers Hub.`;
   }
 
   if (q.includes('dispatch') || q.includes('lorry') || q.includes('lr number') || q.includes('transport') || q.includes('transit')) {

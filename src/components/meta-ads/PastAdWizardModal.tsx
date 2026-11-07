@@ -36,7 +36,7 @@ import {
   FestivalEvent,
   MetaAdResults,
 } from '../../types';
-import { TAMIL_NADU_DISTRICTS } from '../../lib/districts';
+import { INDIA_STATES, getDistrictsForState } from '../../lib/districts';
 import {
   formatINR,
   formatIndianNumber,
@@ -128,6 +128,7 @@ export const PastAdWizardModal: React.FC<PastAdWizardModalProps> = ({
   // STEP 3: TARGET & AUDIENCE
   // ---------------------------------------------------------------------------
   const [targetCustomerTypes, setTargetCustomerTypes] = useState<string[]>(['Distributor', 'Wholesaler']);
+  const [targetState, setTargetState] = useState<string>('Tamil Nadu');
   const [targetPlaces, setTargetPlaces] = useState<string[]>(['Salem', 'Coimbatore']);
   const [targetNotes, setTargetNotes] = useState('');
   const [ageRange, setAgeRange] = useState('25-55');
@@ -852,11 +853,24 @@ export const PastAdWizardModal: React.FC<PastAdWizardModalProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold text-stone-800 mb-1.5">
-                  Target Locations (Tamil Nadu Districts)
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block font-semibold text-stone-800">
+                    Target Locations
+                  </label>
+                  <select
+                    value={targetState}
+                    onChange={(e) => setTargetState(e.target.value)}
+                    className="text-xs px-2 py-1 border border-stone-300 rounded bg-white text-stone-700"
+                  >
+                    {INDIA_STATES.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-stone-50 border border-stone-200 rounded-xl">
-                  {TAMIL_NADU_DISTRICTS.slice(0, 16).map((dist) => {
+                  {getDistrictsForState(targetState).map((dist) => {
                     const isSel = targetPlaces.includes(dist);
                     return (
                       <button

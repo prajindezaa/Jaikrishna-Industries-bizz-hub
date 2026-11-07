@@ -8,6 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Customer, Task, Order, Plan } from '../types';
 import { formatPhoneDisplay } from './phone';
+import { INDIA_STATES, STATE_DISTRICTS_MAP } from './districts';
 
 /**
  * Exports customers to an Excel (.xlsx) workbook using SheetJS
@@ -24,6 +25,7 @@ export function exportCustomersToExcel(customers: Customer[], filename = 'Jaikri
     'City': c.place.city,
     'District': c.place.district,
     'State': c.place.state,
+    'Country': c.place.country || 'India',
     'Status': c.status,
     'Lead Stage': c.leadStage,
     'Source': c.source,
@@ -334,25 +336,18 @@ export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: stri
   ];
 
   const statuses = ['New customer', 'Old customer'];
+  const states = [...INDIA_STATES];
+  const tnDistricts = STATE_DISTRICTS_MAP['Tamil Nadu'] || [];
 
-  const districts = [
-    'Ariyalur', 'Chengalpattu', 'Chennai', 'Coimbatore', 'Cuddalore', 'Dharmapuri',
-    'Dindigul', 'Erode', 'Kallakurichi', 'Kanchipuram', 'Kanyakumari', 'Karur',
-    'Krishnagiri', 'Madurai', 'Mayiladuthurai', 'Nagapattinam', 'Namakkal', 'Nilgiris',
-    'Perambalur', 'Pudukkottai', 'Ramanathapuram', 'Ranipet', 'Salem', 'Sivaganga',
-    'Tenkasi', 'Thanjavur', 'Theni', 'Thoothukudi', 'Tiruchirappalli', 'Tirunelveli',
-    'Tirupathur', 'Tiruppur', 'Tiruvallur', 'Tiruvannamalai', 'Tiruvarur', 'Vellore',
-    'Viluppuram', 'Virudhunagar',
-  ];
-
-  const maxRows = Math.max(groupNames.length, stages.length, statuses.length, districts.length);
+  const maxRows = Math.max(groupNames.length, stages.length, statuses.length, states.length, tnDistricts.length);
   const optionsSheetData = [];
   for (let i = 0; i < maxRows; i++) {
     optionsSheetData.push({
       'Customer Groups': groupNames[i] || '',
       'Lead Stages': stages[i] || '',
       'Statuses': statuses[i] || '',
-      'Districts (Tamil Nadu)': districts[i] || '',
+      'States / UTs (India)': states[i] || '',
+      'Districts (Tamil Nadu)': tnDistricts[i] || '',
     });
   }
 
@@ -361,6 +356,7 @@ export function downloadCustomerImportTemplate(activeGroups?: Array<{ name: stri
     { wch: 30 },
     { wch: 18 },
     { wch: 18 },
+    { wch: 28 },
     { wch: 24 },
   ];
   XLSX.utils.book_append_sheet(workbook, optionsSheet, 'Dropdown_Options_Reference');

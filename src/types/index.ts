@@ -132,6 +132,7 @@ export interface CustomerPlace {
   city: string;
   district: string;
   state: string;
+  country?: string;
 }
 
 export interface StatusHistoryEntry {

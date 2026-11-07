@@ -147,7 +147,7 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
         contactPerson: row.data.contactPerson || row.data.companyName || '',
         phone: row.data.phone || '',
         whatsapp: row.data.whatsapp || row.data.phone || '',
-        place: row.data.place || { area: '', city: 'Salem', district: 'Salem', state: 'Tamil Nadu' },
+        place: row.data.place || { area: '', city: '', district: '', state: 'Tamil Nadu', country: 'India' },
         groupId: row.data.groupId || null,
         groupName: row.data.groupName || 'Ungrouped',
         groupAssignedAt: row.data.groupAssignedAt || new Date().toISOString(),
@@ -276,11 +276,10 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   {/* Mode 1: Assign all to one specific group */}
                   <label
-                    className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition-colors ${
-                      groupMode === 'fixed_group'
+                    className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition-colors ${groupMode === 'fixed_group'
                         ? 'border-[#881337] bg-white ring-1 ring-[#881337]'
                         : 'border-stone-200 bg-white/70 hover:bg-white'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start gap-2">
                       <input
@@ -310,11 +309,10 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
 
                   {/* Mode 2: Match group from spreadsheet column */}
                   <label
-                    className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition-colors ${
-                      groupMode === 'file_column'
+                    className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition-colors ${groupMode === 'file_column'
                         ? 'border-[#881337] bg-white ring-1 ring-[#881337]'
                         : 'border-stone-200 bg-white/70 hover:bg-white'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start gap-2">
                       <input
@@ -402,13 +400,29 @@ export const CustomerImportModal: React.FC<CustomerImportModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-stone-700 mb-1">District (TN 38)</label>
+                  <label className="block font-semibold text-stone-700 mb-1">State / Province</label>
+                  <select
+                    value={mapping.state || ''}
+                    onChange={(e) => setMapping({ ...mapping, state: e.target.value })}
+                    className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
+                  >
+                    <option value="">-- Select Column (or Default Tamil Nadu) --</option>
+                    {headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-stone-700 mb-1">District</label>
                   <select
                     value={mapping.district || ''}
                     onChange={(e) => setMapping({ ...mapping, district: e.target.value })}
                     className="w-full px-2.5 py-1.5 border border-stone-300 rounded-lg bg-white"
                   >
-                    <option value="">-- Select Column (or Auto Salem) --</option>
+                    <option value="">-- Select Column --</option>
                     {headers.map((h) => (
                       <option key={h} value={h}>
                         {h}
