@@ -140,10 +140,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return c.nextFollowUpDate <= todayStr;
   }).length;
 
-  // 1. Leads by City
+  // 1. Leads by Region / City / District
   const cityMap: Record<string, { leads: number; revenue: number }> = {};
   customers.forEach(c => {
-    const city = c.place?.city || 'Salem';
+    const city = c.place?.district || c.place?.city || c.place?.state || 'Other';
     if (!cityMap[city]) cityMap[city] = { leads: 0, revenue: 0 };
     cityMap[city].leads += 1;
     cityMap[city].revenue += (c.totalRevenue || 0);
@@ -154,7 +154,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     revenue: data.revenue,
   }));
   if (leadsByCityData.length === 0) {
-    leadsByCityData = [{ city: 'Salem', leads: 0, revenue: 0 }];
+    leadsByCityData = [{ city: 'Theni', leads: 0, revenue: 0 }];
   }
   leadsByCityData.sort((a, b) => b.leads - a.leads);
 
